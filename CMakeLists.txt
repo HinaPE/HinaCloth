@@ -88,6 +88,7 @@ add_test(NAME xpbd_benchmark COMMAND test_xpbd)
 
 # ==== Vulkan Visualizer ==============================================================
 include(cmake/setup_sdl3.cmake)
+include(cmake/setup_vma.cmake)
 find_package(Vulkan REQUIRED)
 set(VulkanAppName "visualizer")
 add_executable(${VulkanAppName}
@@ -100,4 +101,5 @@ add_executable(${VulkanAppName}
 )
 target_link_libraries(${VulkanAppName} PRIVATE Vulkan::Vulkan)
 use_sdl3(${VulkanAppName})
+use_vma(${VulkanAppName})
 target_compile_features(${VulkanAppName} PRIVATE cxx_std_23)
