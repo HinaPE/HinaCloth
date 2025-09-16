@@ -130,6 +130,17 @@ add_library(xpbd_core MODULE
 )
 use_pybind11(xpbd_core)
 
+set(_HINACLOTH_EXTENSION_MODULES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/blender/modules")
+file(MAKE_DIRECTORY "${_HINACLOTH_EXTENSION_MODULES_DIR}")
+
+add_custom_command(TARGET xpbd_core POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${_HINACLOTH_EXTENSION_MODULES_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:xpbd_core>"
+        "${_HINACLOTH_EXTENSION_MODULES_DIR}/$<TARGET_FILE_NAME:xpbd_core>"
+    COMMENT "Copying xpbd_core module into Blender extension modules directory"
+)
+
 target_compile_features(xpbd_core PUBLIC cxx_std_23)
 target_link_libraries(xpbd_core PRIVATE Python3::Module)
 use_tbb(xpbd_core)
