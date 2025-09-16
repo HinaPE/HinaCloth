@@ -1,7 +1,10 @@
 """Blender entrypoint for the HinaCloth extension."""
 from __future__ import annotations
 
+import importlib
 import logging
+import sys
+from pathlib import Path
 from typing import Final
 
 import bpy
@@ -21,6 +24,7 @@ bl_info: Final = {
 
 _LOGGER = logging.getLogger("hinacloth")
 _HANDLERS_INSTALLED = False
+_MODULES_PATH_ADDED = False
 
 
 def _configure_logging() -> None:
@@ -31,6 +35,20 @@ def _configure_logging() -> None:
     handler.setFormatter(formatter)
     _LOGGER.addHandler(handler)
     _LOGGER.setLevel(logging.INFO)
+
+
+def _ensure_modules_path() -> None:
+    global _MODULES_PATH_ADDED
+    if _MODULES_PATH_ADDED:
+        return
+    modules_dir = Path(__file__).resolve().parent / "modules"
+    if modules_dir.exists():
+        modules_str = str(modules_dir)
+        if modules_str not in sys.path:
+            sys.path.insert(0, modules_str)
+            importlib.invalidate_caches()
+        _LOGGER.debug("Added modules path: %s", modules_str)
+    _MODULES_PATH_ADDED = True
 
 
 def _on_file_loaded(_dummy):  # pragma: no cover - Blender handler
@@ -58,6 +76,7 @@ def _remove_handlers() -> None:
 
 def register() -> None:
     _configure_logging()
+    _ensure_modules_path()
     props.register_properties()
     ops.register()
     ui.register()

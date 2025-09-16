@@ -138,7 +138,11 @@ add_custom_command(TARGET xpbd_core POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "$<TARGET_FILE:xpbd_core>"
         "${_HINACLOTH_EXTENSION_MODULES_DIR}/$<TARGET_FILE_NAME:xpbd_core>"
-    COMMENT "Copying xpbd_core module into Blender extension modules directory"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_RUNTIME_DLLS:xpbd_core>
+        "${_HINACLOTH_EXTENSION_MODULES_DIR}"
+    COMMAND_EXPAND_LISTS
+    COMMENT "Copying xpbd_core module and runtime DLLs into Blender extension modules directory"
 )
 
 target_compile_features(xpbd_core PUBLIC cxx_std_23)
