@@ -16,16 +16,6 @@ jobs:
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Install Vulkan SDK
-        shell: pwsh
-        run: |
-          choco install vulkan-sdk -y --no-progress
-          $sdkRoot = Get-ChildItem 'C:\VulkanSDK' -Directory | Sort-Object Name -Descending | Select-Object -First 1
-          if (-not $sdkRoot) { throw 'Failed to locate installed Vulkan SDK' }
-          Add-Content $env:GITHUB_ENV "VULKAN_SDK=$($sdkRoot.FullName)"
-          Add-Content $env:GITHUB_ENV "VK_SDK_PATH=$($sdkRoot.FullName)"
-          Add-Content $env:GITHUB_PATH "$($sdkRoot.FullName)\Bin"
-
       - name: Download Blender
         shell: pwsh
         run: |
@@ -56,11 +46,6 @@ jobs:
         shell: pwsh
         run: |
           cmake --build build --target test_xpbd --parallel
-
-      - name: Build visualizer
-        shell: pwsh
-        run: |
-          cmake --build build --target visualizer --parallel
 
       - name: Run tests
         shell: pwsh
