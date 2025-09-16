@@ -1,11 +1,20 @@
 cmake_minimum_required(VERSION 3.26)
 project(HinaCloth LANGUAGES CXX)
 
+# ==== Global configuration ===================================================
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+function(hinacloth_enable_release_tuning target)
+    target_compile_options(${target} PRIVATE
+        $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:MSVC>>:/O2 /Ot /Oi /GL /fp:fast /arch:AVX2>
+        $<$<AND:$<CONFIG:Release>,$<NOT:$<CXX_COMPILER_ID:MSVC>>>:-O3 -ffast-math -fomit-frame-pointer -march=native -mavx2>
+    )
+endfunction()
+
+# ==== Dependency setup =======================================================
 include(cmake/setup_pybind.cmake)
 include(cmake/setup_tbb.cmake)
 
@@ -14,6 +23,7 @@ include(cmake/setup_blender.cmake)
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module)
 
+# ==== Python extension metadata ==============================================
 set(_HINACLOTH_PY_EXT "")
 if(DEFINED Python3_EXTENSION_SUFFIX AND Python3_EXTENSION_SUFFIX)
     set(_HINACLOTH_PY_EXT "${Python3_EXTENSION_SUFFIX}")
@@ -25,11 +35,22 @@ else()
     set(_HINACLOTH_PY_EXT ".so")
 endif()
 
+# ==== xpbd_core module =======================================================
 add_library(xpbd_core MODULE
     src/xpbd.cpp
     src/xpbd_pybind.cpp
 )
 use_pybind11(xpbd_core)
+use_tbb(xpbd_core)
+
+target_compile_features(xpbd_core PUBLIC cxx_std_23)
+target_link_libraries(xpbd_core PRIVATE Python3::Module)
+set_target_properties(xpbd_core PROPERTIES
+    PREFIX "${Python3_MODULE_PREFIX}"
+    SUFFIX "${_HINACLOTH_PY_EXT}"
+    OUTPUT_NAME "xpbd_core"
+)
+hinacloth_enable_release_tuning(xpbd_core)
 
 set(_HINACLOTH_EXTENSION_MODULES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/blender/modules")
 file(MAKE_DIRECTORY "${_HINACLOTH_EXTENSION_MODULES_DIR}")
@@ -46,34 +67,20 @@ add_custom_command(TARGET xpbd_core POST_BUILD
     COMMENT "Copying xpbd_core module and runtime DLLs into Blender extension modules directory"
 )
 
-target_compile_features(xpbd_core PUBLIC cxx_std_23)
-target_link_libraries(xpbd_core PRIVATE Python3::Module)
-use_tbb(xpbd_core)
-set_target_properties(xpbd_core PROPERTIES
-    PREFIX "${Python3_MODULE_PREFIX}"
-    SUFFIX "${_HINACLOTH_PY_EXT}"
-    OUTPUT_NAME "xpbd_core"
-)
-
-target_compile_options(xpbd_core PRIVATE
-    $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:MSVC>>:/O2 /Ot /Oi /GL /fp:fast /arch:AVX2>
-    $<$<AND:$<CONFIG:Release>,$<NOT:$<CXX_COMPILER_ID:MSVC>>>:-O3 -ffast-math -fomit-frame-pointer -march=native -mavx2>
-)
-
 file(GLOB _HINACLOTH_EXAMPLE_SCRIPTS "${CMAKE_CURRENT_SOURCE_DIR}/example/*.py")
 hinacloth_add_blend_generation(xpbd_core ${_HINACLOTH_EXAMPLE_SCRIPTS})
 
+# ==== Tests =================================================================
 enable_testing()
+
 add_executable(test_xpbd
-        tests/test_xpbd.cpp
-        src/xpbd.cpp
+    tests/test_xpbd.cpp
+    src/xpbd.cpp
 )
 target_include_directories(test_xpbd PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-target_compile_options(test_xpbd PRIVATE
-        $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:MSVC>>:/O2 /Ot /Oi /GL /fp:fast /arch:AVX2>
-        $<$<AND:$<CONFIG:Release>,$<NOT:$<CXX_COMPILER_ID:MSVC>>>:-O3 -ffast-math -fomit-frame-pointer -march=native -mavx2>
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 use_tbb(test_xpbd)
+hinacloth_enable_release_tuning(test_xpbd)
+
 add_test(NAME xpbd_benchmark COMMAND test_xpbd)

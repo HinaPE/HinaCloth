@@ -1,5 +1,6 @@
 .idea
+.venv
 cmake-build-debug
 cmake-build-release
 blender/modules/
-*.blend
+example/demo1.blend
