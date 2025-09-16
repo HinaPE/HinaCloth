@@ -29,15 +29,24 @@ jobs:
           echo "BLENDER_DIR=$RUNNER_TEMP/Blender.app/Contents" >> "$GITHUB_ENV"
           echo "BLENDER_EXE=$RUNNER_TEMP/Blender.app/Contents/MacOS/Blender" >> "$GITHUB_ENV"
           echo "BLENDER_PYTHON=$RUNNER_TEMP/Blender.app/Contents/Resources/4.5/python" >> "$GITHUB_ENV"
-          echo "BLENDER_PYTHON_INCLUDE=$RUNNER_TEMP/Blender.app/Contents/Resources/4.5/python/include/python3.11" >> "$GITHUB_ENV"
-          echo "BLENDER_PYTHON_LIB=$RUNNER_TEMP/Blender.app/Contents/Resources/4.5/python/lib/libpython3.11.dylib" >> "$GITHUB_ENV"
-          echo "BLENDER_PYTHON_EXEC=$RUNNER_TEMP/Blender.app/Contents/Resources/4.5/python/bin/python3.11" >> "$GITHUB_ENV"
+
+      - name: Resolve Blender Python paths
+        run: |
+          set -eux
+          PY_EXEC="$BLENDER_PYTHON/bin/python3.11"
+          INCLUDE="$($PY_EXEC -c "import sysconfig; print(sysconfig.get_paths()['platinclude'])")"
+          if [ ! -d "$INCLUDE" ]; then
+            INCLUDE="$($PY_EXEC -c "import sysconfig; print(sysconfig.get_paths()['include'])")"
+          fi
+          LIBFILE="$($PY_EXEC -c "import sysconfig, os; libdir=sysconfig.get_config_var('LIBDIR'); libname=sysconfig.get_config_var('LDLIBRARY'); print(os.path.join(libdir, libname))")"
+          echo "BLENDER_PYTHON_INCLUDE=$INCLUDE" >> "$GITHUB_ENV"
+          echo "BLENDER_PYTHON_LIB=$LIBFILE" >> "$GITHUB_ENV"
+          echo "BLENDER_PYTHON_EXEC=$PY_EXEC" >> "$GITHUB_ENV"
 
       - name: Configure
         run: |
           set -eux
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DPython3_ROOT_DIR="$BLENDER_PYTHON" \
             -DPython3_EXECUTABLE="$BLENDER_PYTHON_EXEC" \
             -DPython3_INCLUDE_DIR="$BLENDER_PYTHON_INCLUDE" \
             -DPython3_LIBRARY="$BLENDER_PYTHON_LIB" \
