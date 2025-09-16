@@ -1,7 +1,3 @@
-#include "vk_engine.h"
-
-#include "VkBootstrap.h"
-#include <imgui.h>
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4100 4189 4127 4324)
@@ -18,26 +14,36 @@
 #pragma GCC diagnostic ignored "-Wtype-limits"
 #pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
 #endif
+
 #define VMA_IMPLEMENTATION
 #include "vk_mem_alloc.h"
-#ifdef _MSC_VER
-#ifdef _MSC_VER
+
+#if defined(_MSC_VER)
 #pragma warning(pop)
 #elif defined(__clang__)
 #pragma clang diagnostic pop
 #elif defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif
-#endif
 
+#include "vk_engine.h"
+
+#include "VkBootstrap.h"
+#include <imgui.h>
+#include <algorithm>
 #include <chrono>
 #include <ranges>
 #include <stdexcept>
+#include <string>
 
-void DescriptorAllocator::init_pool(VkDevice device, uint32_t maxSets, std::span<PoolSizeRatio> ratios) {
+void DescriptorAllocator::init_pool(VkDevice device, uint32_t maxSets, std::span<const PoolSizeRatio> ratios) {
+    maxSets = std::max(1u, maxSets);
     std::vector<VkDescriptorPoolSize> sizes;
     sizes.reserve(ratios.size());
-    for (auto [t, r] : ratios) sizes.push_back(VkDescriptorPoolSize{.type = t, .descriptorCount = static_cast<uint32_t>(r * static_cast<float>(maxSets))});
+    for (const auto& [type, ratio] : ratios) {
+        const uint32_t count = std::max(1u, static_cast<uint32_t>(ratio * static_cast<float>(maxSets)));
+        sizes.push_back(VkDescriptorPoolSize{.type = type, .descriptorCount = count});
+    }
     const VkDescriptorPoolCreateInfo info{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, .pNext = nullptr, .flags = 0u, .maxSets = maxSets, .poolSizeCount = static_cast<uint32_t>(sizes.size()), .pPoolSizes = sizes.data()};
     VK_CHECK(vkCreateDescriptorPool(device, &info, nullptr, &pool));
 }
@@ -574,11 +580,24 @@ void VulkanEngine::destroy_renderer() {
 
 void VulkanEngine::create_imgui() {
     ui_ = std::make_unique<ImGuiLayer>();
-    if (!ui_->init(ctx_.window, ctx_.instance, ctx_.physical, ctx_.device,
-                   ctx_.graphics_queue, ctx_.graphics_queue_family,
-                   swapchain_.swapchain_image_format,
-                   static_cast<uint32_t>(swapchain_.swapchain_images.size())))
-        throw std::runtime_error("ImGuiLayer init failed");
+    try {
+        if (!ui_->init(ctx_.window,
+                       ctx_.instance,
+                       ctx_.physical,
+                       ctx_.device,
+                       ctx_.graphics_queue,
+                       ctx_.graphics_queue_family,
+                       swapchain_.swapchain_image_format,
+                       static_cast<uint32_t>(swapchain_.swapchain_images.size()))) {
+            throw std::runtime_error("ImGuiLayer init failed");
+        }
+    } catch (const std::exception& ex) {
+        if (ui_) {
+            ui_->shutdown(ctx_.device);
+            ui_.reset();
+        }
+        throw std::runtime_error(std::string("ImGuiLayer init failed: ") + ex.what());
+    }
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;

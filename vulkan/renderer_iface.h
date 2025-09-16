@@ -3,6 +3,8 @@
 
 #include "vk_mem_alloc.h"
 #include <SDL3/SDL.h>
+#include <stdexcept>
+#include <string>
 #include <vulkan/vulkan.h>
 
 // clang-format off

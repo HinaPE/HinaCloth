@@ -1,11 +1,22 @@
 #include "imgui_layer.h"
 #include <array>
+#include <limits>
+#include <stdexcept>
+#include <string>
 #include "imgui.h"
 #include "backends/imgui_impl_sdl3.h"
 #include "backends/imgui_impl_vulkan.h"
 
+namespace {
+inline void checkVkResult(VkResult result, const char* expression) {
+    if (result != VK_SUCCESS) {
+        throw std::runtime_error(std::string("Vulkan error (") + std::to_string(static_cast<int>(result)) + ") at " + expression);
+    }
+}
+} // namespace
+
 #ifndef VK_CHECK
-#define VK_CHECK(x) do { VkResult _e=(x); if(_e!=VK_SUCCESS){ abort(); } } while(0)
+#define VK_CHECK(expr) checkVkResult((expr), #expr)
 #endif
 
 bool ImGuiLayer::init(SDL_Window* window,
@@ -55,7 +66,14 @@ bool ImGuiLayer::init(SDL_Window* window,
         st.Colors[ImGuiCol_WindowBg].w = 1.0f;
     }
 
-    ImGui_ImplSDL3_InitForVulkan(window);
+    if (!ImGui_ImplSDL3_InitForVulkan(window)) {
+        ImGui::DestroyContext();
+        if (pool_) {
+            vkDestroyDescriptorPool(device, pool_, nullptr);
+            pool_ = VK_NULL_HANDLE;
+        }
+        return false;
+    }
 
     ImGui_ImplVulkan_InitInfo ii{};
     ii.ApiVersion = VK_API_VERSION_1_3;
@@ -109,8 +127,8 @@ void ImGuiLayer::process_event(const SDL_Event* e)
 void ImGuiLayer::new_frame()
 {
     if (!inited_) return;
-    ImGui_ImplSDL3_NewFrame();
     ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
     for (auto& fn : panels_) fn();
 }
