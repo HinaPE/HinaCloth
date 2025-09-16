@@ -1,0 +1,57 @@
+name: macOS CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install ninja tbb || brew upgrade ninja tbb
+
+      - name: Download Blender
+        run: |
+          set -eux
+          url="https://download.blender.org/release/Blender4.5/blender-4.5.3-universal.dmg"
+          archive="$RUNNER_TEMP/blender.dmg"
+          curl -L "$url" -o "$archive"
+          hdiutil attach "$archive" -mountpoint /Volumes/Blender
+          cp -R /Volumes/Blender/Blender.app "$RUNNER_TEMP/Blender.app"
+          hdiutil detach /Volumes/Blender
+          echo "BLENDER_DIR=$RUNNER_TEMP/Blender.app/Contents" >> "$GITHUB_ENV"
+          echo "BLENDER_EXE=$RUNNER_TEMP/Blender.app/Contents/MacOS/Blender" >> "$GITHUB_ENV"
+          echo "BLENDER_PYTHON=$RUNNER_TEMP/Blender.app/Contents/Resources/4.5/python" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: |
+          set -eux
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DPython3_ROOT_DIR="$BLENDER_PYTHON" \
+            -DHINACLOTH_BLENDER_EXECUTABLE="$BLENDER_EXE"
+
+      - name: Build xpbd_core
+        run: |
+          set -eux
+          cmake --build build --target xpbd_core --parallel
+
+      - name: Build test_xpbd
+        run: |
+          set -eux
+          cmake --build build --target test_xpbd --parallel
+
+      - name: Run tests
+        run: |
+          set -eux
+          ctest --test-dir build --output-on-failure
+
+      - name: Validate Blender example
+        run: |
+          set -eux
+          "$BLENDER_EXE" --background --python example/demo1.py

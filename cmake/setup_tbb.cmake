@@ -98,7 +98,7 @@ set(TBB_SOURCE_DIR "${_tbb_source_dir}" CACHE PATH "Absolute path to the oneTBB 
 set(TBB_INCLUDE_DIR "${_tbb_install_dir}/include" CACHE PATH "Path to oneTBB headers" FORCE)
 set(TBB_ROOT "${_tbb_install_dir}" CACHE PATH "oneTBB install prefix" FORCE)
 
-set(TBB_DIR "${_tbb_install_dir}/lib/cmake/tbb" CACHE PATH "Directory containing TBBConfig.cmake" FORCE)
+set(TBB_DIR "${_tbb_install_dir}/lib/cmake/TBB" CACHE PATH "Directory containing TBBConfig.cmake" FORCE)
 
 if(NOT TARGET TBB::tbb)
     find_package(TBB CONFIG REQUIRED PATHS "${TBB_DIR}" NO_DEFAULT_PATH)
