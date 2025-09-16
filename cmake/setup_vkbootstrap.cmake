@@ -8,7 +8,7 @@ if(DEFINED _HINACLOTH_SETUP_VKBOOTSTRAP_INCLUDED)
 endif()
 set(_HINACLOTH_SETUP_VKBOOTSTRAP_INCLUDED TRUE)
 
-set(VK_BOOTSTRAP_VERSION "1.4.325" CACHE STRING "vk-bootstrap release to download")
+set(VK_BOOTSTRAP_VERSION "1.4.321" CACHE STRING "vk-bootstrap release to download")
 set(VK_BOOTSTRAP_BASE_URL "https://github.com/charles-lunarg/vk-bootstrap/archive/refs/tags" CACHE STRING "Base URL for vk-bootstrap archives")
 
 set(_vkbootstrap_archive "v${VK_BOOTSTRAP_VERSION}.tar.gz")

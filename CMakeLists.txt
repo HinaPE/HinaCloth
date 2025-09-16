@@ -87,6 +87,7 @@ add_test(NAME xpbd_benchmark COMMAND test_xpbd)
 
 
 # ==== Vulkan Visualizer ==============================================================
+include(cmake/setup_imgui.cmake)
 include(cmake/setup_sdl3.cmake)
 include(cmake/setup_vkbootstrap.cmake)
 include(cmake/setup_vma.cmake)
@@ -101,6 +102,7 @@ add_executable(${VulkanAppName}
         vulkan/renderer_iface.h
 )
 target_link_libraries(${VulkanAppName} PRIVATE Vulkan::Vulkan)
+use_imgui(${VulkanAppName})
 use_sdl3(${VulkanAppName})
 use_vkbootstrap(${VulkanAppName})
 use_vma(${VulkanAppName})
