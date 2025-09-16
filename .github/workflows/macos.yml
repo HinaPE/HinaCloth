@@ -19,9 +19,10 @@ jobs:
       - name: Download Blender
         run: |
           set -eux
-          url="https://download.blender.org/release/Blender4.5/blender-4.5.3-universal.dmg"
+          url="https://download.blender.org/release/Blender4.5/blender-4.5.3-macos-arm64.dmg"
+          alt_url="https://download.blender.org/release/Blender4.5/blender-4.5.3-macos-x64.dmg"
           archive="$RUNNER_TEMP/blender.dmg"
-          curl -L "$url" -o "$archive"
+          curl -L "$url" -o "$archive" || curl -L "$alt_url" -o "$archive"
           hdiutil attach "$archive" -mountpoint /Volumes/Blender
           cp -R /Volumes/Blender/Blender.app "$RUNNER_TEMP/Blender.app"
           hdiutil detach /Volumes/Blender
