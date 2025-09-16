@@ -4,6 +4,9 @@
 
 #include <atomic>
 
+#include "src/aligned_allocator.h"
+#include "src/cloth_data.h"
+
 int add(int a, int b) {
     return a + b;
 }
