@@ -19,12 +19,20 @@ jobs:
       - name: Install Vulkan SDK
         shell: pwsh
         run: |
-          choco install vulkan-sdk -y --no-progress
-          $sdkRoot = Get-ChildItem 'C:\VulkanSDK' -Directory | Sort-Object Name -Descending | Select-Object -First 1
-          if (-not $sdkRoot) { throw 'Failed to locate installed Vulkan SDK' }
-          Add-Content $env:GITHUB_ENV "VULKAN_SDK=$($sdkRoot.FullName)"
-          Add-Content $env:GITHUB_ENV "VK_SDK_PATH=$($sdkRoot.FullName)"
-          Add-Content $env:GITHUB_PATH "$($sdkRoot.FullName)\Bin"
+          $latest = Invoke-RestMethod -Uri 'https://vulkan.lunarg.com/sdk/latest/windows.json' -Headers @{ Accept = 'application/json' }
+          $version = $latest.windows
+          Write-Host "Using Vulkan SDK version $version"
+          $downloadUrl = "https://sdk.lunarg.com/sdk/download/$version/windows/vulkan_sdk.exe"
+          $installerPath = Join-Path $env:RUNNER_TEMP "vulkan_sdk_$version.exe"
+          Invoke-WebRequest -Uri $downloadUrl -OutFile $installerPath
+          Start-Process -FilePath $installerPath -ArgumentList '/S' -NoNewWindow -Wait
+          $sdkRoot = Join-Path 'C:\VulkanSDK' $version
+          if (-not (Test-Path $sdkRoot)) {
+            throw "Failed to locate installed Vulkan SDK at $sdkRoot"
+          }
+          Add-Content $env:GITHUB_ENV "VULKAN_SDK=$sdkRoot"
+          Add-Content $env:GITHUB_ENV "VK_SDK_PATH=$sdkRoot"
+          Add-Content $env:GITHUB_PATH (Join-Path $sdkRoot 'Bin')
 
       - name: Download Blender
         shell: pwsh
