@@ -56,3 +56,4 @@ jobs:
         shell: pwsh
         run: |
           & "$env:BLENDER_EXE" --background --python example/demo1.py
+
