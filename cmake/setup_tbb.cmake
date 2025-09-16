@@ -81,7 +81,7 @@ if(NOT EXISTS "${_tbb_install_dir}/include/tbb/tbb.h")
     if(CMAKE_CONFIGURATION_TYPES)
         list(APPEND _tbb_build_command "--config" "Release")
     elseif(DEFINED _tbb_single_config)
-        # No additional flag needed, build type passed during configure.
+        list(APPEND _tbb_build_command "--config" "${_tbb_single_config}")
     endif()
 
     execute_process(
