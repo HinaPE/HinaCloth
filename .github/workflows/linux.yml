@@ -7,16 +7,14 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build build-essential libtbb-dev curl gcc-14 g++-14
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
-          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
+          sudo apt-get install -y ninja-build build-essential libtbb-dev curl
 
       - name: Download Blender
         run: |
@@ -37,9 +35,6 @@ jobs:
           echo "BLENDER_PYTHON=$folder/4.5/python" >> "$GITHUB_ENV"
 
       - name: Configure
-        env:
-          CC: gcc-14
-          CXX: g++-14
         run: |
           set -eux
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \

@@ -14,7 +14,7 @@ jobs:
       - name: Install dependencies
         run: |
           brew update
-          brew install ninja tbb || brew upgrade ninja tbb
+          brew install ninja tbb python@3.11 || brew upgrade ninja tbb python@3.11
 
       - name: Download Blender
         run: |
@@ -34,9 +34,12 @@ jobs:
         run: |
           set -eux
           PY_EXEC="$BLENDER_PYTHON/bin/python3.11"
-          INCLUDE="$($PY_EXEC -c "import sysconfig; print(sysconfig.get_paths()['platinclude'])")"
-          if [ ! -d "$INCLUDE" ]; then
-            INCLUDE="$($PY_EXEC -c "import sysconfig; print(sysconfig.get_paths()['include'])")"
+          INCLUDE="$($PY_EXEC -c "import sysconfig; print(sysconfig.get_paths().get('platinclude'))")"
+          if [ -z "$INCLUDE" ] || [ ! -d "$INCLUDE" ]; then
+            INCLUDE="$($PY_EXEC -c "import sysconfig; print(sysconfig.get_paths().get('include'))")"
+          fi
+          if [ -z "$INCLUDE" ] || [ ! -f "$INCLUDE/patchlevel.h" ]; then
+            INCLUDE="$(/opt/homebrew/bin/python3.11 -c "import sysconfig; print(sysconfig.get_paths().get('platinclude') or sysconfig.get_paths().get('include'))")"
           fi
           LIBFILE="$($PY_EXEC -c "import sysconfig, os; libdir=sysconfig.get_config_var('LIBDIR'); libname=sysconfig.get_config_var('LDLIBRARY'); print(os.path.join(libdir, libname))")"
           echo "BLENDER_PYTHON_INCLUDE=$INCLUDE" >> "$GITHUB_ENV"
