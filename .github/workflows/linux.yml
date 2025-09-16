@@ -1,0 +1,62 @@
+name: Linux CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build build-essential libtbb-dev curl
+
+      - name: Download Blender
+        run: |
+          set -eux
+          url="https://download.blender.org/release/Blender4.5/blender-4.5.3-linux-x64.tar.xz"
+          archive="$RUNNER_TEMP/blender.tar.xz"
+          curl -L "$url" -o "$archive"
+          dest="$RUNNER_TEMP/blender"
+          mkdir -p "$dest"
+          tar -xf "$archive" -C "$dest"
+          folder=$(find "$dest" -maxdepth 1 -type d -name 'blender*' | head -n 1)
+          if [ -z "$folder" ]; then
+            echo "Unable to locate Blender directory" >&2
+            exit 1
+          fi
+          echo "BLENDER_DIR=$folder" >> "$GITHUB_ENV"
+          echo "BLENDER_EXE=$folder/blender" >> "$GITHUB_ENV"
+          echo "BLENDER_PYTHON=$folder/4.5/python" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: |
+          set -eux
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DPython3_ROOT_DIR="$BLENDER_PYTHON" \
+            -DHINACLOTH_BLENDER_EXECUTABLE="$BLENDER_EXE"
+
+      - name: Build xpbd_core
+        run: |
+          set -eux
+          cmake --build build --target xpbd_core --parallel
+
+      - name: Build test_xpbd
+        run: |
+          set -eux
+          cmake --build build --target test_xpbd --parallel
+
+      - name: Run tests
+        run: |
+          set -eux
+          ctest --test-dir build --output-on-failure
+
+      - name: Validate Blender example
+        run: |
+          set -eux
+          "$BLENDER_EXE" --background --python example/demo1.py
