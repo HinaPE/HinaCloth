@@ -28,3 +28,18 @@ target_compile_options(xpbd_core PRIVATE
     $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:MSVC>>:/O2 /Ot /Oi /GL /fp:fast /arch:AVX2>
     $<$<AND:$<CONFIG:Release>,$<NOT:$<CXX_COMPILER_ID:MSVC>>>:-O3 -ffast-math -fomit-frame-pointer -march=native -mavx2>
 )
+
+enable_testing()
+add_executable(test_xpbd
+        tests/test_xpbd.cpp
+        src/xpbd.cpp
+)
+target_include_directories(test_xpbd PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_options(test_xpbd PRIVATE
+        $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:MSVC>>:/O2 /Ot /Oi /GL /fp:fast /arch:AVX2>
+        $<$<AND:$<CONFIG:Release>,$<NOT:$<CXX_COMPILER_ID:MSVC>>>:-O3 -ffast-math -fomit-frame-pointer -march=native -mavx2>
+)
+use_tbb(test_xpbd)
+add_test(NAME xpbd_benchmark COMMAND test_xpbd)
