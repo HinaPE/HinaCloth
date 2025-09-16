@@ -1,4 +1,4 @@
-# HinaCloth
+# HinaCloth ![Windows CI](https://github.com/imeho/HinaCloth/actions/workflows/windows.yml/badge.svg)
 
 HinaCloth is an XPBD (eXtended Position-Based Dynamics) cloth simulation benchmark. It ships a high-performance C++ solver, PyBind11 bridge, a Blender 4.5 extension, and tooling to measure runtime and constraint quality across backends.
 

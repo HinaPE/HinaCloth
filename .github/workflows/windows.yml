@@ -42,6 +42,11 @@ jobs:
         run: |
           cmake --build build --target xpbd_core --parallel
 
+      - name: Build test_xpbd
+        shell: pwsh
+        run: |
+          cmake --build build --target test_xpbd --parallel
+
       - name: Run tests
         shell: pwsh
         run: |
