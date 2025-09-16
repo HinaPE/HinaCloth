@@ -23,36 +23,7 @@ namespace HinaClothMdSpan = std;
 #  include <experimental/mdspan>
 namespace HinaClothMdSpan = std::experimental;
 #else
-namespace HinaClothMdSpan {
-inline constexpr std::size_t dynamic_extent = static_cast<std::size_t>(-1);
-
-template <class IndexType, IndexType Extent = dynamic_extent>
-struct extents {
-    using index_type = IndexType;
-    IndexType size{};
-    constexpr explicit extents(IndexType count) : size(count) {}
-    constexpr IndexType extent(std::size_t) const { return size; }
-};
-
-struct layout_stride {};
-
-template <class ElementType, class Extents, class Layout>
-class mdspan {
-public:
-    using element_type = ElementType;
-    using index_type = typename Extents::index_type;
-    mdspan(ElementType* ptr, Extents ext, std::array<std::size_t, 1> strides)
-        : ptr_(ptr), extents_(ext), stride_(strides[0]) {}
-    ElementType* data() const { return ptr_; }
-    ElementType& operator()(index_type i) const { return ptr_[i * stride_]; }
-    ElementType& operator[](index_type i) const { return ptr_[i * stride_]; }
-    Extents extents() const { return extents_; }
-private:
-    ElementType* ptr_;
-    Extents extents_;
-    std::size_t stride_;
-};
-}
+#  error "mdspan support not available on this platform"
 #endif
 
 namespace HinaPE {
@@ -356,5 +327,4 @@ namespace HinaPE {
 } // namespace HinaPE
 
 #endif // HINACLOTH_ALIGNED_ALLOCATOR_H
-
 
