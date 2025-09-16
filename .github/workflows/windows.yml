@@ -39,12 +39,15 @@ jobs:
 
       - name: Build xpbd_core
         shell: pwsh
-        run: cmake --build build --target xpbd_core --parallel
+        run: |
+          cmake --build build --target xpbd_core --parallel
 
       - name: Run tests
         shell: pwsh
-        run: ctest --test-dir build --output-on-failure
+        run: |
+          ctest --test-dir build --output-on-failure
 
       - name: Validate Blender example
         shell: pwsh
-        run: & "$env:BLENDER_EXE" --background --python example/demo1.py
+        run: |
+          & "$env:BLENDER_EXE" --background --python example/demo1.py
