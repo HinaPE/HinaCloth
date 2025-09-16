@@ -84,3 +84,20 @@ use_tbb(test_xpbd)
 hinacloth_enable_release_tuning(test_xpbd)
 
 add_test(NAME xpbd_benchmark COMMAND test_xpbd)
+
+
+# ==== Vulkan Visualizer ==============================================================
+include(cmake/setup_sdl3.cmake)
+find_package(Vulkan REQUIRED)
+set(VulkanAppName "visualizer")
+add_executable(${VulkanAppName}
+        main.cpp
+        vulkan/vk_engine.cpp
+        vulkan/vk_engine.h
+        vulkan/imgui_layer.cpp
+        vulkan/imgui_layer.h
+        vulkan/renderer_iface.h
+)
+target_link_libraries(${VulkanAppName} PRIVATE Vulkan::Vulkan)
+use_sdl3(${VulkanAppName})
+target_compile_features(${VulkanAppName} PRIVATE cxx_std_23)

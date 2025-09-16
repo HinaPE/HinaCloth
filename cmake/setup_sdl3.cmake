@@ -99,7 +99,7 @@ set(SDL3_SOURCE_DIR "${_sdl_source_dir}" CACHE PATH "Absolute path to the SDL3 s
 set(SDL3_INCLUDE_DIR "${_sdl_install_dir}/include" CACHE PATH "Path to SDL3 headers" FORCE)
 set(SDL3_ROOT "${_sdl_install_dir}" CACHE PATH "SDL3 install prefix" FORCE)
 
-set(SDL3_DIR "${_sdl_install_dir}/lib/cmake/SDL3" CACHE PATH "Directory containing SDL3Config.cmake" FORCE)
+set(SDL3_DIR "${_sdl_install_dir}/cmake" CACHE PATH "Directory containing SDL3Config.cmake" FORCE)
 
 if(NOT TARGET SDL3::SDL3)
     find_package(SDL3 CONFIG REQUIRED PATHS "${SDL3_DIR}" NO_DEFAULT_PATH)
