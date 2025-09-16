@@ -17,36 +17,40 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Install Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: latest
+          cache: true
+
+      - name: Export Vulkan env
         shell: pwsh
         run: |
-          $latest = Invoke-RestMethod -Uri 'https://vulkan.lunarg.com/sdk/latest/windows.json' -Headers @{ Accept = 'application/json' }
-          $version = $latest.windows
-          Write-Host "Using Vulkan SDK version $version"
-          $downloadUrl = "https://sdk.lunarg.com/sdk/download/$version/windows/vulkan_sdk.exe"
-          $installerPath = Join-Path $env:RUNNER_TEMP "vulkan_sdk_$version.exe"
-          Invoke-WebRequest -Uri $downloadUrl -OutFile $installerPath
-          Start-Process -FilePath $installerPath -ArgumentList '/S' -NoNewWindow -Wait
-          $sdkRoot = Join-Path 'C:\VulkanSDK' $version
-          if (-not (Test-Path $sdkRoot)) {
-            throw "Failed to locate installed Vulkan SDK at $sdkRoot"
-          }
-          Add-Content $env:GITHUB_ENV "VULKAN_SDK=$sdkRoot"
-          Add-Content $env:GITHUB_ENV "VK_SDK_PATH=$sdkRoot"
-          Add-Content $env:GITHUB_PATH (Join-Path $sdkRoot 'Bin')
+          if (-not $env:VULKAN_SDK) { throw "VULKAN_SDK not set" }
+          "`nVULKAN_SDK=$env:VULKAN_SDK" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+          "`nVK_SDK_PATH=$env:VULKAN_SDK" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+          (Join-Path $env:VULKAN_SDK 'Bin') | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding ascii
 
       - name: Download Blender
         shell: pwsh
         run: |
           $url = "https://download.blender.org/release/Blender4.5/blender-4.5.3-windows-x64.zip"
           $archive = Join-Path $env:RUNNER_TEMP 'blender.zip'
-          Invoke-WebRequest $url -OutFile $archive
           $dest = Join-Path $env:RUNNER_TEMP 'blender'
+          $ProgressPreference = 'SilentlyContinue'
+          for ($i=0; $i -lt 3; $i++) {
+            try { Invoke-WebRequest $url -OutFile $archive -TimeoutSec 600; break } catch { Start-Sleep 2 }
+          }
           Expand-Archive -Path $archive -DestinationPath $dest -Force
           $folder = Get-ChildItem $dest | Where-Object { $_.PSIsContainer } | Select-Object -First 1
           if (-not $folder) { throw 'Failed to locate Blender directory' }
-          Add-Content $env:GITHUB_ENV "BLENDER_DIR=$($folder.FullName)"
-          Add-Content $env:GITHUB_ENV "BLENDER_EXE=$($folder.FullName)\blender.exe"
-          Add-Content $env:GITHUB_ENV "BLENDER_PYTHON=$($folder.FullName)\4.5\python"
+          "`nBLENDER_DIR=$($folder.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+          "`nBLENDER_EXE=$($folder.FullName)\blender.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+          "`nBLENDER_PYTHON=$($folder.FullName)\4.5\python" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+
+      - name: Verify Vulkan SDK
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$env:VULKAN_SDK\Lib\vulkan-1.lib")) { throw "Missing vulkan-1.lib" }
 
       - name: Configure
         shell: pwsh
@@ -57,25 +61,20 @@ jobs:
 
       - name: Build xpbd_core
         shell: pwsh
-        run: |
-          cmake --build build --target xpbd_core --parallel
+        run: cmake --build build --target xpbd_core --parallel
 
       - name: Build test_xpbd
         shell: pwsh
-        run: |
-          cmake --build build --target test_xpbd --parallel
+        run: cmake --build build --target test_xpbd --parallel
 
       - name: Build visualizer
         shell: pwsh
-        run: |
-          cmake --build build --target visualizer --parallel
+        run: cmake --build build --target visualizer --parallel
 
       - name: Run tests
         shell: pwsh
-        run: |
-          ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure
 
       - name: Validate Blender example
         shell: pwsh
-        run: |
-          & "$env:BLENDER_EXE" --background --python example/demo1.py
+        run: '& "$env:BLENDER_EXE" --background --python example/demo1.py'
