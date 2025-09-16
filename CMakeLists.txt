@@ -8,10 +8,113 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include(cmake/setup_pybind.cmake)
 include(cmake/setup_tbb.cmake)
+
+# Hint CMake to prefer paths we explicitly provide.
+set(Python3_FIND_STRATEGY LOCATION)
+
+if(NOT DEFINED Python3_ROOT_DIR AND NOT Python3_EXECUTABLE)
+    set(_HINACLOTH_BLENDER_PYTHON_DIRS)
+
+    if(WIN32)
+        set(_HINACLOTH_BLENDER_ROOTS
+            "$ENV{ProgramFiles}/Blender Foundation"
+            "$ENV{ProgramW6432}/Blender Foundation"
+        )
+        foreach(_root IN LISTS _HINACLOTH_BLENDER_ROOTS)
+            if(_root AND EXISTS "${_root}")
+                file(GLOB _candidates LIST_DIRECTORIES TRUE
+                    "${_root}/Blender*/[0-9.]*/python")
+                list(APPEND _HINACLOTH_BLENDER_PYTHON_DIRS ${_candidates})
+            endif()
+        endforeach()
+    elseif(APPLE)
+        set(_HINACLOTH_BLENDER_ROOTS
+            "/Applications"
+            "$ENV{HOME}/Applications"
+        )
+        foreach(_root IN LISTS _HINACLOTH_BLENDER_ROOTS)
+            if(_root AND EXISTS "${_root}")
+                file(GLOB _candidates LIST_DIRECTORIES TRUE
+                    "${_root}/Blender*.app/Contents/Resources/*/python")
+                list(APPEND _HINACLOTH_BLENDER_PYTHON_DIRS ${_candidates})
+            endif()
+        endforeach()
+    else()
+        set(_HINACLOTH_BLENDER_ROOTS
+            "/usr/share/blender"
+            "/usr/lib/blender"
+            "/usr/local/share/blender"
+            "/usr/local/lib/blender"
+            "/opt"
+            "$ENV{HOME}/.local/share/blender"
+            "$ENV{HOME}/blender"
+        )
+        foreach(_root IN LISTS _HINACLOTH_BLENDER_ROOTS)
+            if(_root AND EXISTS "${_root}")
+                file(GLOB _candidates LIST_DIRECTORIES TRUE
+                    "${_root}/Blender*/[0-9.]*/python"
+                    "${_root}/blender*/[0-9.]*/python"
+                    "${_root}/[0-9.]*/python")
+                list(APPEND _HINACLOTH_BLENDER_PYTHON_DIRS ${_candidates})
+            endif()
+        endforeach()
+    endif()
+
+    if(_HINACLOTH_BLENDER_PYTHON_DIRS)
+        list(REMOVE_DUPLICATES _HINACLOTH_BLENDER_PYTHON_DIRS)
+        list(SORT _HINACLOTH_BLENDER_PYTHON_DIRS)
+        list(REVERSE _HINACLOTH_BLENDER_PYTHON_DIRS)
+        list(GET _HINACLOTH_BLENDER_PYTHON_DIRS 0 _HINACLOTH_SELECTED_PYTHON_ROOT)
+        if(EXISTS "${_HINACLOTH_SELECTED_PYTHON_ROOT}")
+            message(STATUS "HinaCloth: auto-detected Blender Python at ${_HINACLOTH_SELECTED_PYTHON_ROOT}")
+            set(Python3_ROOT_DIR "${_HINACLOTH_SELECTED_PYTHON_ROOT}" CACHE PATH "Blender Python root" FORCE)
+
+            if(WIN32)
+                set(_HINACLOTH_EXECUTABLE "${Python3_ROOT_DIR}/bin/python.exe")
+            else()
+                file(GLOB _exec_candidates
+                    "${Python3_ROOT_DIR}/bin/python3*"
+                    "${Python3_ROOT_DIR}/bin/python")
+                if(_exec_candidates)
+                    list(SORT _exec_candidates)
+                    list(REVERSE _exec_candidates)
+                    list(GET _exec_candidates 0 _HINACLOTH_EXECUTABLE)
+                endif()
+            endif()
+
+            if(_HINACLOTH_EXECUTABLE AND EXISTS "${_HINACLOTH_EXECUTABLE}")
+                set(Python3_EXECUTABLE "${_HINACLOTH_EXECUTABLE}" CACHE FILEPATH "Blender Python executable" FORCE)
+            endif()
+
+            if(WIN32)
+                file(GLOB _lib_candidates
+                    "${Python3_ROOT_DIR}/lib/python*.lib"
+                    "${Python3_ROOT_DIR}/libs/python*.lib")
+            elseif(APPLE)
+                file(GLOB _lib_candidates "${Python3_ROOT_DIR}/lib/libpython*.dylib")
+            else()
+                file(GLOB _lib_candidates
+                    "${Python3_ROOT_DIR}/lib/libpython*.so"
+                    "${Python3_ROOT_DIR}/lib/libpython*.a")
+            endif()
+
+            if(_lib_candidates)
+                list(SORT _lib_candidates)
+                list(REVERSE _lib_candidates)
+                list(GET _lib_candidates 0 _HINACLOTH_PYTHON_LIBRARY)
+                if(EXISTS "${_HINACLOTH_PYTHON_LIBRARY}")
+                    set(Python3_LIBRARY "${_HINACLOTH_PYTHON_LIBRARY}" CACHE FILEPATH "Blender Python library" FORCE)
+                endif()
+            endif()
+        endif()
+    endif()
+endif()
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module)
 
 add_library(xpbd_core MODULE
     src/xpbd.cpp
+    src/xpbd_pybind.cpp
 )
 use_pybind11(xpbd_core)
 
