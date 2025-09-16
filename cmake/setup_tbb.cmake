@@ -98,60 +98,68 @@ set(TBB_SOURCE_DIR "${_tbb_source_dir}" CACHE PATH "Absolute path to the oneTBB 
 set(TBB_INCLUDE_DIR "${_tbb_install_dir}/include" CACHE PATH "Path to oneTBB headers" FORCE)
 set(TBB_ROOT "${_tbb_install_dir}" CACHE PATH "oneTBB install prefix" FORCE)
 
-set(_tbb_library_names tbb tbb12)
-if(MSVC)
-    list(APPEND _tbb_library_names tbb12md tbb12_debug)
+set(TBB_DIR "${_tbb_install_dir}/lib/cmake/tbb" CACHE PATH "Directory containing TBBConfig.cmake" FORCE)
+
+if(NOT TARGET TBB::tbb)
+    find_package(TBB CONFIG REQUIRED PATHS "${TBB_DIR}" NO_DEFAULT_PATH)
 endif()
 
-set(_tbb_library_paths
-    "${_tbb_install_dir}/lib"
-    "${_tbb_install_dir}/lib/intel64"
-    "${_tbb_install_dir}/lib/intel64/gcc4.8"
-    "${_tbb_install_dir}/lib/intel64/vc14"
-    "${_tbb_install_dir}/lib/intel64/Release"
-    "${_tbb_install_dir}/lib/Release"
-)
+get_target_property(_hina_tbb_type TBB::tbb TYPE)
+set(_HINACLOTH_TBB_RUNTIME_COPY FALSE)
+if(_hina_tbb_type STREQUAL "SHARED_LIBRARY" OR _hina_tbb_type STREQUAL "MODULE_LIBRARY" OR _hina_tbb_type STREQUAL "UNKNOWN_LIBRARY")
+    set(_HINACLOTH_TBB_RUNTIME_COPY TRUE)
+endif()
 
-find_library(TBB_LIBRARY
-    NAMES ${_tbb_library_names}
-    PATHS ${_tbb_library_paths}
-    NO_DEFAULT_PATH
-)
-
-if(NOT TBB_LIBRARY)
-    if(WIN32)
-        file(GLOB_RECURSE _tbb_candidates "${_tbb_install_dir}/lib/*tbb*.lib")
-    elseif(APPLE)
-        file(GLOB_RECURSE _tbb_candidates "${_tbb_install_dir}/lib/libtbb*.dylib")
-    else()
-        file(GLOB_RECURSE _tbb_candidates "${_tbb_install_dir}/lib/libtbb*.so*")
+if(NOT _HINACLOTH_TBB_RUNTIME_COPY)
+    get_target_property(_hina_tbb_location TBB::tbb IMPORTED_LOCATION)
+    if(_hina_tbb_location MATCHES "\\.(dll|so(\\.[0-9]+)*|dylib)$")
+        set(_HINACLOTH_TBB_RUNTIME_COPY TRUE)
     endif()
-    if(_tbb_candidates)
-        list(SORT _tbb_candidates)
-        foreach(_cand IN LISTS _tbb_candidates)
-            if(_cand MATCHES [[tbb([0-9_]*)(\.lib|\.so(\.[0-9]+)*|\.dylib)$]])
-                set(TBB_LIBRARY "${_cand}" CACHE FILEPATH "Path to oneTBB library" FORCE)
+endif()
+
+if(NOT _HINACLOTH_TBB_RUNTIME_COPY)
+    get_target_property(_hina_tbb_configs TBB::tbb IMPORTED_CONFIGURATIONS)
+    if(_hina_tbb_configs)
+        foreach(_hina_tbb_cfg IN LISTS _hina_tbb_configs)
+            string(TOUPPER "${_hina_tbb_cfg}" _hina_tbb_cfg_upper)
+            get_target_property(_hina_tbb_loc_cfg TBB::tbb IMPORTED_LOCATION_${_hina_tbb_cfg_upper})
+            if(_hina_tbb_loc_cfg MATCHES "\\.(dll|so(\\.[0-9]+)*|dylib)$")
+                set(_HINACLOTH_TBB_RUNTIME_COPY TRUE)
                 break()
             endif()
         endforeach()
     endif()
 endif()
 
-if(NOT TBB_LIBRARY)
-    message(FATAL_ERROR "Failed to locate built oneTBB library under ${_tbb_install_dir}")
-endif()
-
-if(NOT TARGET TBB::tbb)
-    add_library(TBB::tbb UNKNOWN IMPORTED)
-    set_target_properties(TBB::tbb PROPERTIES
-        IMPORTED_LOCATION "${TBB_LIBRARY}"
-        INTERFACE_INCLUDE_DIRECTORIES "${TBB_INCLUDE_DIR}"
-    )
-endif()
-
 function(use_tbb TARGET_NAME)
     if(NOT TARGET ${TARGET_NAME})
         message(FATAL_ERROR "use_tbb called with unknown target `${TARGET_NAME}`")
     endif()
+
+    if(NOT TARGET TBB::tbb)
+        find_package(TBB CONFIG REQUIRED PATHS "${TBB_DIR}" NO_DEFAULT_PATH)
+    endif()
+
     target_link_libraries(${TARGET_NAME} PUBLIC TBB::tbb)
+
+    if(_HINACLOTH_TBB_RUNTIME_COPY)
+        get_property(_hina_tbb_copied TARGET ${TARGET_NAME} PROPERTY HINACLOTH_TBB_RUNTIME_COPIED SET)
+        if(NOT _hina_tbb_copied)
+            add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    $<TARGET_FILE:TBB::tbb>
+                    $<TARGET_FILE_DIR:${TARGET_NAME}>
+                COMMAND_EXPAND_LISTS
+            )
+            if(WIN32)
+                add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        $<TARGET_RUNTIME_DLLS:${TARGET_NAME}>
+                        $<TARGET_FILE_DIR:${TARGET_NAME}>
+                    COMMAND_EXPAND_LISTS
+                )
+            endif()
+            set_property(TARGET ${TARGET_NAME} PROPERTY HINACLOTH_TBB_RUNTIME_COPIED TRUE)
+        endif()
+    endif()
 endfunction()

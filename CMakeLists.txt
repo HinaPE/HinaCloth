@@ -10,13 +10,21 @@ include(cmake/setup_pybind.cmake)
 include(cmake/setup_tbb.cmake)
 find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module)
 
-add_library(hinacloth_python MODULE main.cpp)
-use_pybind11(hinacloth_python)
-use_tbb(hinacloth_python)
-target_compile_features(hinacloth_python PUBLIC cxx_std_23)
-target_link_libraries(hinacloth_python PRIVATE Python3::Module)
-set_target_properties(hinacloth_python PROPERTIES
+add_library(xpbd_core MODULE
+    src/xpbd.cpp
+)
+use_pybind11(xpbd_core)
+
+target_compile_features(xpbd_core PUBLIC cxx_std_23)
+target_link_libraries(xpbd_core PRIVATE Python3::Module)
+use_tbb(xpbd_core)
+set_target_properties(xpbd_core PROPERTIES
     PREFIX "${Python3_MODULE_PREFIX}"
     SUFFIX "${Python3_MODULE_EXTENSION}"
-    OUTPUT_NAME "hinacloth"
+    OUTPUT_NAME "xpbd_core"
+)
+
+target_compile_options(xpbd_core PRIVATE
+    $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:MSVC>>:/O2 /Ot /Oi /GL /fp:fast /arch:AVX2>
+    $<$<AND:$<CONFIG:Release>,$<NOT:$<CXX_COMPILER_ID:MSVC>>>:-O3 -ffast-math -fomit-frame-pointer -march=native -mavx2>
 )
