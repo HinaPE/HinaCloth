@@ -19,6 +19,7 @@ if(NOT DEFINED Python3_ROOT_DIR AND NOT Python3_EXECUTABLE)
         set(_HINACLOTH_BLENDER_ROOTS
             "$ENV{ProgramFiles}/Blender Foundation"
             "$ENV{ProgramW6432}/Blender Foundation"
+            "$ENV{SystemDrive}/Program Files (x86)/Blender Foundation"
         )
         foreach(_root IN LISTS _HINACLOTH_BLENDER_ROOTS)
             if(_root AND EXISTS "${_root}")
@@ -112,6 +113,17 @@ endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module)
 
+set(_HINACLOTH_PY_EXT "")
+if(DEFINED Python3_EXTENSION_SUFFIX AND Python3_EXTENSION_SUFFIX)
+    set(_HINACLOTH_PY_EXT "${Python3_EXTENSION_SUFFIX}")
+elseif(DEFINED Python3_MODULE_EXTENSION AND Python3_MODULE_EXTENSION)
+    set(_HINACLOTH_PY_EXT "${Python3_MODULE_EXTENSION}")
+elseif(WIN32)
+    set(_HINACLOTH_PY_EXT ".pyd")
+else()
+    set(_HINACLOTH_PY_EXT ".so")
+endif()
+
 add_library(xpbd_core MODULE
     src/xpbd.cpp
     src/xpbd_pybind.cpp
@@ -123,7 +135,7 @@ target_link_libraries(xpbd_core PRIVATE Python3::Module)
 use_tbb(xpbd_core)
 set_target_properties(xpbd_core PROPERTIES
     PREFIX "${Python3_MODULE_PREFIX}"
-    SUFFIX "${Python3_MODULE_EXTENSION}"
+    SUFFIX "${_HINACLOTH_PY_EXT}"
     OUTPUT_NAME "xpbd_core"
 )
 
