@@ -10,21 +10,13 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <mdspan>
 #include <memory_resource>
 #include <new>
 #include <span>
 #include <type_traits>
 #include <typeindex>
 #include <vector>
-#if __has_include(<mdspan>) && defined(__cpp_lib_mdspan)
-#  include <mdspan>
-namespace HinaClothMdSpan = std;
-#elif __has_include(<experimental/mdspan>)
-#  include <experimental/mdspan>
-namespace HinaClothMdSpan = std::experimental;
-#else
-#  error "mdspan support not available on this platform"
-#endif
 
 namespace HinaPE {
 
@@ -118,7 +110,7 @@ namespace HinaPE {
     template <class T>
     struct ColumnView {
         using element_type = T;
-        using mdspan_type  = HinaClothMdSpan::mdspan<T, HinaClothMdSpan::extents<size_t, HinaClothMdSpan::dynamic_extent>, HinaClothMdSpan::layout_stride>;
+        using mdspan_type  = std::mdspan<T, std::extents<size_t, std::dynamic_extent>, std::layout_stride>;
 
         T* data{nullptr};
         size_t count{0};
@@ -131,7 +123,7 @@ namespace HinaPE {
             return stride_bytes == sizeof(T);
         }
         [[nodiscard]] mdspan_type mdspan() const {
-            using ext = HinaClothMdSpan::extents<size_t, HinaClothMdSpan::dynamic_extent>;
+            using ext = std::extents<size_t, std::dynamic_extent>;
             std::array<size_t, 1> strides{std::max<std::size_t>(1, stride_bytes / sizeof(T))};
             return mdspan_type(data, ext(count), strides);
         }
@@ -327,4 +319,3 @@ namespace HinaPE {
 } // namespace HinaPE
 
 #endif // HINACLOTH_ALIGNED_ALLOCATOR_H
-
