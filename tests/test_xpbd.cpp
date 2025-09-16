@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <numeric>
 #include <optional>
 #include <span>
@@ -94,17 +95,17 @@ ClothBlueprint makeGridBlueprint(std::size_t width, std::size_t height, float sp
 
     for (std::size_t y = 0; y < height; ++y) {
         for (std::size_t x = 0; x + 1 < width; ++x) {
-            const std::uint32_t idx = static_cast<std::uint32_t>(y * width + x);
-            const std::uint32_t jdx = static_cast<std::uint32_t>(y * width + x + 1);
-            const std::uint8_t color = static_cast<std::uint8_t>(x % 2);
+            const std::uint32_t idx   = static_cast<std::uint32_t>(y * width + x);
+            const std::uint32_t jdx   = static_cast<std::uint32_t>(y * width + x + 1);
+            const std::uint8_t color  = static_cast<std::uint8_t>(x % 2);
             append_edge(idx, jdx, color);
         }
     }
     for (std::size_t y = 0; y + 1 < height; ++y) {
         for (std::size_t x = 0; x < width; ++x) {
-            const std::uint32_t idx = static_cast<std::uint32_t>(y * width + x);
-            const std::uint32_t jdx = static_cast<std::uint32_t>((y + 1) * width + x);
-            const std::uint8_t color = static_cast<std::uint8_t>(2 + (y % 2));
+            const std::uint32_t idx   = static_cast<std::uint32_t>(y * width + x);
+            const std::uint32_t jdx   = static_cast<std::uint32_t>((y + 1) * width + x);
+            const std::uint8_t color  = static_cast<std::uint8_t>(2 + (y % 2));
             append_edge(idx, jdx, color);
         }
     }
@@ -189,12 +190,88 @@ struct BenchmarkConfig {
     int steps_per_trial;
 };
 
+struct ConstraintResiduals {
+    double mean_abs{0.0};
+    double rms{0.0};
+    double max_abs{0.0};
+    double relative_rms{0.0};
+    double relative_max{0.0};
+};
+
 struct BenchmarkResult {
     Stats stats;
     double per_step_us{0.0};
+    ConstraintResiduals residuals{};
 };
 
 using StepFunction = void (*)(ClothData&, const XPBDParams&);
+
+ConstraintResiduals computeConstraintResiduals(const ClothData& cloth, const ClothBlueprint& bp) {
+    ConstraintResiduals metrics{};
+    const auto particles = cloth.particles();
+
+    const std::size_t constraint_count = bp.edge_i.size();
+    if (constraint_count == 0) {
+        return metrics;
+    }
+
+    double sum_abs       = 0.0;
+    double sum_sq        = 0.0;
+    double sum_rel_sq    = 0.0;
+    double max_abs       = 0.0;
+    double max_rel       = 0.0;
+
+    const auto px = particles.px.span();
+    const auto py = particles.py.span();
+    const auto pz = particles.pz.span();
+
+    for (std::size_t c = 0; c < constraint_count; ++c) {
+        const std::uint32_t i = bp.edge_i[c];
+        const std::uint32_t j = bp.edge_j[c];
+        const double rest     = static_cast<double>(bp.rest[c]);
+
+        const double dx = static_cast<double>(px[i]) - static_cast<double>(px[j]);
+        const double dy = static_cast<double>(py[i]) - static_cast<double>(py[j]);
+        const double dz = static_cast<double>(pz[i]) - static_cast<double>(pz[j]);
+        const double length    = std::sqrt(dx * dx + dy * dy + dz * dz);
+        const double residual  = length - rest;
+        const double abs_value = std::abs(residual);
+
+        sum_abs += abs_value;
+        sum_sq += residual * residual;
+        max_abs = std::max(max_abs, abs_value);
+
+        if (rest > std::numeric_limits<double>::epsilon()) {
+            const double rel = residual / rest;
+            sum_rel_sq += rel * rel;
+            max_rel = std::max(max_rel, std::abs(rel));
+        }
+    }
+
+    const double inv_count = 1.0 / static_cast<double>(constraint_count);
+    metrics.mean_abs       = sum_abs * inv_count;
+    metrics.rms            = std::sqrt(sum_sq * inv_count);
+    metrics.max_abs        = max_abs;
+    metrics.relative_rms   = std::sqrt(sum_rel_sq * inv_count);
+    metrics.relative_max   = max_rel;
+    return metrics;
+}
+
+ConstraintResiduals evaluateResiduals(const ClothBlueprint& bp, const XPBDParams& params, const BenchmarkConfig& cfg, StepFunction fn) {
+    ClothData cloth;
+    for (int warmup = 0; warmup < cfg.warmup_runs; ++warmup) {
+        loadClothState(cloth, bp);
+        for (int step = 0; step < cfg.steps_per_trial; ++step) {
+            fn(cloth, params);
+        }
+    }
+
+    loadClothState(cloth, bp);
+    for (int step = 0; step < cfg.steps_per_trial; ++step) {
+        fn(cloth, params);
+    }
+    return computeConstraintResiduals(cloth, bp);
+}
 
 BenchmarkResult runBenchmark(const ClothBlueprint& bp, const XPBDParams& params, const BenchmarkConfig& cfg, StepFunction fn) {
     ClothData cloth;
@@ -223,6 +300,7 @@ BenchmarkResult runBenchmark(const ClothBlueprint& bp, const XPBDParams& params,
     result.stats      = computeStats(samples_ms);
     const double steps = static_cast<double>(cfg.steps_per_trial);
     result.per_step_us = (result.stats.mean_ms * 1000.0) / steps;
+    result.residuals   = evaluateResiduals(bp, params, cfg, fn);
     return result;
 }
 
@@ -244,6 +322,16 @@ void printHeader(std::size_t width, std::size_t height, std::size_t particles, s
     std::cout << "--------------------------------------------------------------------------------" << '\n';
 }
 
+void printResidualHeader() {
+    std::cout << std::left << std::setw(14) << "Implementation"
+              << std::right << std::setw(14) << "Mean |C|"
+              << std::setw(14) << "RMS |C|"
+              << std::setw(14) << "Max |C|"
+              << std::setw(14) << "RMS rel"
+              << std::setw(14) << "Max rel" << '\n';
+    std::cout << "--------------------------------------------------------------------------------" << '\n';
+}
+
 void printRow(const Implementation& impl, const BenchmarkResult& result) {
     const Stats& s = result.stats;
     std::cout << std::left << std::setw(14) << impl.name
@@ -253,6 +341,15 @@ void printRow(const Implementation& impl, const BenchmarkResult& result) {
               << std::setw(12) << s.min_ms
               << std::setw(12) << s.max_ms
               << std::setw(12) << result.per_step_us << '\n';
+}
+
+void printResidualRow(const Implementation& impl, const ConstraintResiduals& residuals) {
+    std::cout << std::left << std::setw(14) << impl.name
+              << std::right << std::setw(14) << std::scientific << std::setprecision(3) << residuals.mean_abs
+              << std::setw(14) << residuals.rms
+              << std::setw(14) << residuals.max_abs
+              << std::setw(14) << residuals.relative_rms
+              << std::setw(14) << residuals.relative_max << '\n';
 }
 
 void printSpeedup(const BenchmarkResult& baseline, const BenchmarkResult& challenger, const std::string& name) {
@@ -265,10 +362,14 @@ void printSpeedup(const BenchmarkResult& baseline, const BenchmarkResult& challe
 } // namespace
 
 int main() {
-    const std::array<BenchmarkConfig, 3> configs{{
+    const std::array<BenchmarkConfig, 7> configs{{
         BenchmarkConfig{32, 32, 5, 20, 32},
         BenchmarkConfig{64, 64, 5, 16, 24},
         BenchmarkConfig{96, 96, 3, 12, 16},
+        BenchmarkConfig{128, 128, 3, 10, 12},
+        BenchmarkConfig{192, 192, 2, 8, 8},
+        BenchmarkConfig{256, 256, 2, 6, 6},
+        BenchmarkConfig{512, 512, 5, 6, 6},
     }};
 
     XPBDParams params{};
@@ -303,23 +404,40 @@ int main() {
         printHeader(cfg.width, cfg.height, particles, edges);
 
         std::optional<BenchmarkResult> native_result;
+        std::vector<std::optional<BenchmarkResult>> results;
+        results.reserve(implementations.size());
 
         for (const auto& impl : implementations) {
             if (impl.name == "avx2" && !has_avx2) {
                 std::cout << std::left << std::setw(14) << impl.name << std::right << std::setw(12) << "n/a"
                           << std::setw(12) << "n/a" << std::setw(12) << "n/a" << std::setw(12) << "n/a"
                           << std::setw(12) << "n/a" << std::setw(12) << "n/a" << '\n';
+                results.emplace_back(std::nullopt);
                 continue;
             }
 
             const BenchmarkResult result = runBenchmark(blueprint, params, cfg, impl.fn);
             printRow(impl, result);
+            results.emplace_back(result);
 
             if (impl.name == "native") {
                 native_result = result;
             } else if (native_result.has_value()) {
                 printSpeedup(*native_result, result, impl.name);
             }
+        }
+
+        std::cout << "Constraint residuals (|C(x)| metrics)" << '\n';
+        printResidualHeader();
+        for (std::size_t idx = 0; idx < implementations.size(); ++idx) {
+            const auto& impl = implementations[idx];
+            if (!results[idx].has_value()) {
+                std::cout << std::left << std::setw(14) << impl.name << std::right << std::setw(14) << "n/a"
+                          << std::setw(14) << "n/a" << std::setw(14) << "n/a" << std::setw(14) << "n/a"
+                          << std::setw(14) << "n/a" << '\n';
+                continue;
+            }
+            printResidualRow(impl, results[idx]->residuals);
         }
     }
 
