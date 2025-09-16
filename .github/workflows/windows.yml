@@ -1,0 +1,50 @@
+name: Windows CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ashutoshvarma/setup-ninja@v1.1
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Download Blender
+        shell: pwsh
+        run: |
+          $url = "https://download.blender.org/release/Blender4.5/blender-4.5.3-windows-x64.zip"
+          $archive = Join-Path $env:RUNNER_TEMP 'blender.zip'
+          Invoke-WebRequest $url -OutFile $archive
+          $dest = Join-Path $env:RUNNER_TEMP 'blender'
+          Expand-Archive -Path $archive -DestinationPath $dest -Force
+          $folder = Get-ChildItem $dest | Where-Object { $_.PSIsContainer } | Select-Object -First 1
+          if (-not $folder) { throw 'Failed to locate Blender directory' }
+          Add-Content $env:GITHUB_ENV "BLENDER_DIR=$($folder.FullName)"
+          Add-Content $env:GITHUB_ENV "BLENDER_EXE=$($folder.FullName)\blender.exe"
+          Add-Content $env:GITHUB_ENV "BLENDER_PYTHON=$($folder.FullName)\4.5\python"
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
+            -DPython3_ROOT_DIR="$env:BLENDER_PYTHON" `
+            -DHINACLOTH_BLENDER_EXECUTABLE="$env:BLENDER_EXE"
+
+      - name: Build xpbd_core
+        shell: pwsh
+        run: cmake --build build --target xpbd_core --parallel
+
+      - name: Run tests
+        shell: pwsh
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Validate Blender example
+        shell: pwsh
+        run: & "$env:BLENDER_EXE" --background --python example/demo1.py
