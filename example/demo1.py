@@ -1,4 +1,4 @@
-"""Demo script that builds a simple HinaCloth test scene inside Blender."""
+"""Demo script that builds a simple HinaCloth test scene inside Blender.""" 
 from __future__ import annotations
 
 import math
@@ -15,6 +15,7 @@ if _EXTENSION_ROOT.exists():
     if root_str not in sys.path:
         sys.path.append(root_str)
 
+
 def ensure_hinacloth_registered() -> None:
     scene = bpy.context.scene
     if hasattr(scene, "hinacloth_settings"):
@@ -24,11 +25,13 @@ def ensure_hinacloth_registered() -> None:
     if not hasattr(scene, "hinacloth_settings"):
         raise RuntimeError("Failed to register HinaCloth extension inside Blender.")
 
+
 def reset_scene() -> None:
     bpy.ops.wm.read_homefile(use_empty=True)
     # Remove everything created by the home file so the scene starts empty.
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
+
 
 def setup_world() -> None:
     scene = bpy.context.scene
@@ -50,12 +53,14 @@ def setup_world() -> None:
     sun.rotation_euler = (math.radians(50.0), math.radians(20.0), math.radians(25.0))
     sun.data.energy = 4.5
 
+
 def configure_material(mat: bpy.types.Material, base_color, roughness: float) -> None:
     mat.use_nodes = True
     bsdf = mat.node_tree.nodes.get("Principled BSDF")
     if bsdf:
         bsdf.inputs["Base Color"].default_value = (*base_color, 1.0)
         bsdf.inputs["Roughness"].default_value = roughness
+
 
 def create_ground() -> bpy.types.Object:
     bpy.ops.mesh.primitive_plane_add(size=6.0, enter_editmode=False, location=(0.0, 0.0, 0.0))
@@ -69,6 +74,7 @@ def create_ground() -> bpy.types.Object:
     ground.data.materials.clear()
     ground.data.materials.append(mat)
     return ground
+
 
 def create_cloth(width: int = 40, height: int = 40) -> bpy.types.Object:
     if width < 2 or height < 2:
@@ -89,6 +95,7 @@ def create_cloth(width: int = 40, height: int = 40) -> bpy.types.Object:
     cloth.data.materials.clear()
     cloth.data.materials.append(mat)
     return cloth
+
 
 def register_hinacloth_settings(cloth_object: bpy.types.Object, width: int, height: int) -> None:
     ensure_hinacloth_registered()
@@ -113,6 +120,7 @@ def register_hinacloth_settings(cloth_object: bpy.types.Object, width: int, heig
     state = scene.hinacloth_state
     state.status_message = "Scene initialized."
 
+
 def build_demo(scene_path: pathlib.Path | None = None, grid_width: int = 40, grid_height: int = 40) -> None:
     reset_scene()
     setup_world()
@@ -123,7 +131,9 @@ def build_demo(scene_path: pathlib.Path | None = None, grid_width: int = 40, gri
     if scene_path is not None:
         bpy.ops.wm.save_mainfile(filepath=str(scene_path))
 
+
 if __name__ == "__main__":
-    default_path = pathlib.Path.cwd() / "demo1.blend"
+    script_dir = pathlib.Path(__file__).resolve().parent
+    default_path = script_dir / "demo1.blend"
     build_demo(default_path, grid_width=40, grid_height=40)
     print(f"HinaCloth demo scene saved to {default_path}")
