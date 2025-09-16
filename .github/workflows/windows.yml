@@ -47,6 +47,11 @@ jobs:
           "`nBLENDER_EXE=$($folder.FullName)\blender.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
           "`nBLENDER_PYTHON=$($folder.FullName)\4.5\python" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
 
+      - name: Verify Vulkan SDK
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$env:VULKAN_SDK\Lib\vulkan-1.lib")) { throw "Missing vulkan-1.lib" }
+
       - name: Configure
         shell: pwsh
         run: |
