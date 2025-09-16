@@ -8,7 +8,9 @@
 #include <tbb/blocked_range.h>
 #include <tbb/parallel_for.h>
 
-#include <immintrin.h>
+#if defined(__AVX2__) && (defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86))
+#  include <immintrin.h>
+#endif
 
 namespace HinaPE {
 namespace {
