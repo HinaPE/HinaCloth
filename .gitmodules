@@ -1,0 +1,4 @@
+[submodule "vulkan-visualizer"]
+	path = vulkan-visualizer
+	url = https://github.com/HinaPE/vulkan-visualizer.git
+	branch = master

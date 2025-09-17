@@ -99,31 +99,6 @@ add_test(NAME xpbd_benchmark COMMAND test_xpbd)
 
 # ==== Vulkan Visualizer ==============================================================
 if (HINACLOTH_BUILD_VULKAN_VISUALIZER)
-    include(cmake/setup_imgui.cmake)
-    include(cmake/setup_sdl3.cmake)
-    include(cmake/setup_vkbootstrap.cmake)
-    include(cmake/setup_vma.cmake)
-    find_package(Vulkan REQUIRED)
-    set(VulkanAppName "visualizer")
-    add_executable(${VulkanAppName}
-            main.cpp
-            vulkan/vk_engine.cpp
-            vulkan/vk_engine.h
-            vulkan/cloth_renderer.cpp
-            vulkan/cloth_renderer.h
-            vulkan/shaders/cloth_vert_spv.inc
-            vulkan/shaders/cloth_frag_spv.inc
-            src/xpbd.cpp
-    )
-    target_link_libraries(${VulkanAppName} PRIVATE Vulkan::Vulkan)
-    target_include_directories(${VulkanAppName} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/vulkan)
-    use_imgui(${VulkanAppName})
-    use_sdl3(${VulkanAppName})
-    use_vkbootstrap(${VulkanAppName})
-    use_vma(${VulkanAppName})
-    use_tbb(${VulkanAppName})
-    imgui_enable_backends(${VulkanAppName} BACKENDS sdl3 vulkan)
-    target_compile_features(${VulkanAppName} PRIVATE cxx_std_23)
-    hinacloth_enable_release_tuning(${VulkanAppName})
+    add_subdirectory(vulkan-visualizer)
 endif()
 
