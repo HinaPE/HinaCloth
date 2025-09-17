@@ -75,6 +75,15 @@ hinacloth_add_blend_generation(xpbd_core ${_HINACLOTH_EXAMPLE_SCRIPTS})
 # ==== Tests =================================================================
 enable_testing()
 
+add_executable(test_clothdata
+    tests/test_clothdata.cpp
+)
+target_include_directories(test_clothdata PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+hinacloth_enable_release_tuning(test_clothdata)
+
+add_test(NAME clothdata_verification COMMAND test_clothdata)
 add_executable(test_xpbd
     tests/test_xpbd.cpp
     src/xpbd.cpp
@@ -120,3 +129,4 @@ if (HINACLOTH_BUILD_VULKAN_VISUALIZER)
     target_compile_features(${VulkanAppName} PRIVATE cxx_std_23)
     hinacloth_enable_release_tuning(${VulkanAppName})
 endif()
+

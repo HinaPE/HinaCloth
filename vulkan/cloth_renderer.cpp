@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <numbers>
 #include <span>
 #include <stdexcept>
@@ -68,7 +69,7 @@ void ClothRenderer::initialize(const EngineContext& eng) {
 
     const float width_world  = static_cast<float>(blueprint_.width - 1) * blueprint_.spacing;
     const float height_world = static_cast<float>(blueprint_.height - 1) * blueprint_.spacing;
-    target_ = Vec3{width_world * 0.5f, height_world * 0.25f, 0.0f};
+    target_ = Vec3{0.0f, 0.0f, 0.0f};
     camera_distance_ = std::max(width_world, height_world) * 1.8f;
     camera_distance_ = std::clamp(camera_distance_, kCameraDistanceMin, kCameraDistanceMax);
 
@@ -749,15 +750,33 @@ ClothRenderer::ClothBlueprint ClothRenderer::make_grid_blueprint(uint32_t width,
 
     const float diag_offset = spacing * 0.5f;
 
+    float min_x = std::numeric_limits<float>::max();
+    float max_x = std::numeric_limits<float>::lowest();
+    float min_y = std::numeric_limits<float>::max();
+    float max_y = std::numeric_limits<float>::lowest();
+
     for (uint32_t y = 0; y < height; ++y) {
         for (uint32_t x = 0; x < width; ++x) {
             const size_t idx = static_cast<size_t>(y) * width + x;
             bp.px[idx] = static_cast<float>(x) * spacing;
             bp.py[idx] = static_cast<float>(height - 1 - y) * spacing + ((y % 2u) ? diag_offset : 0.0f);
+            min_x = std::min(min_x, bp.px[idx]);
+            max_x = std::max(max_x, bp.px[idx]);
+            min_y = std::min(min_y, bp.py[idx]);
+            max_y = std::max(max_y, bp.py[idx]);
             if (y == 0u) {
                 bp.pinned[idx] = 1u;
                 bp.inv_mass[idx] = 0.0f;
             }
+        }
+    }
+
+    if (!bp.px.empty()) {
+        const float center_x = 0.5f * (min_x + max_x);
+        const float center_y = 0.5f * (min_y + max_y);
+        for (size_t idx = 0; idx < bp.px.size(); ++idx) {
+            bp.px[idx] -= center_x;
+            bp.py[idx] -= center_y;
         }
     }
 
@@ -862,7 +881,7 @@ std::array<float, 16> ClothRenderer::make_perspective(float fovy_radians, float 
     const float f = 1.0f / std::tan(fovy_radians * 0.5f);
     std::array<float, 16> m{};
     m[0] = f / aspect;
-    m[5] = f;
+    m[5] = -f; // Flip Y for Vulkan clip space
     m[10] = (far_plane + near_plane) / (near_plane - far_plane);
     m[14] = (2.0f * far_plane * near_plane) / (near_plane - far_plane);
     m[11] = -1.0f;
