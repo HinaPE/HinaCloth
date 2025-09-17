@@ -1,151 +1,81 @@
 cmake_minimum_required(VERSION 3.26)
 project(HinaCloth LANGUAGES CXX)
 
-option(HINACLOTH_BUILD_VULKAN_VISUALIZER "Build the Vulkan visualizer application" OFF)
-
-# ==== Global configuration ===================================================
+# Global configuration
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-function(hinacloth_enable_release_tuning target)
-    target_compile_options(${target} PRIVATE
-        $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:MSVC>>:/O2 /Ot /Oi /GL /fp:fast /arch:AVX2>
-        $<$<AND:$<CONFIG:Release>,$<NOT:$<CXX_COMPILER_ID:MSVC>>>:-O3 -ffast-math -fomit-frame-pointer -march=native -mavx2>
+# Build a static library with current src contents only
+file(GLOB HINACLOTH_SRC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
+)
+
+add_library(xpbd_core STATIC ${HINACLOTH_SRC})
+target_include_directories(xpbd_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+# Reasonable optimization flags for Release (no external deps)
+if (MSVC)
+    target_compile_options(xpbd_core PRIVATE
+        $<$<CONFIG:Release>:/O2 /Ot /Oi /fp:fast>
     )
-endfunction()
-
-# ==== Dependency setup =======================================================
-include(cmake/setup_pybind.cmake)
-include(cmake/setup_tbb.cmake)
-
-set(Python3_FIND_STRATEGY LOCATION)
-include(cmake/setup_blender.cmake)
-
-find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module)
-
-# ==== Python extension metadata ==============================================
-set(_HINACLOTH_PY_EXT "")
-if(DEFINED Python3_EXTENSION_SUFFIX AND Python3_EXTENSION_SUFFIX)
-    set(_HINACLOTH_PY_EXT "${Python3_EXTENSION_SUFFIX}")
-elseif(DEFINED Python3_MODULE_EXTENSION AND Python3_MODULE_EXTENSION)
-    set(_HINACLOTH_PY_EXT "${Python3_MODULE_EXTENSION}")
-elseif(WIN32)
-    set(_HINACLOTH_PY_EXT ".pyd")
 else()
-    set(_HINACLOTH_PY_EXT ".so")
+    target_compile_options(xpbd_core PRIVATE
+        $<$<CONFIG:Release>:-O3 -ffast-math -fomit-frame-pointer>
+    )
 endif()
 
-# ==== xpbd_core module =======================================================
-add_library(xpbd_core MODULE
-    src/xpbd.cpp
-    src/xpbd_pybind.cpp
+# ---- Vulkan visualizer example (no changes inside subdir) ----
+add_subdirectory(vulkan-visualizer)
+
+add_executable(xpbd_vulkan
+    examples/xpbd_vulkan.cpp
 )
-use_pybind11(xpbd_core)
-use_tbb(xpbd_core)
-
-target_compile_features(xpbd_core PUBLIC cxx_std_23)
-target_link_libraries(xpbd_core PRIVATE Python3::Module)
-set_target_properties(xpbd_core PROPERTIES
-    PREFIX "${Python3_MODULE_PREFIX}"
-    SUFFIX "${_HINACLOTH_PY_EXT}"
-    OUTPUT_NAME "xpbd_core"
-)
-hinacloth_enable_release_tuning(xpbd_core)
-
-set(_HINACLOTH_EXTENSION_MODULES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/blender/modules")
-file(MAKE_DIRECTORY "${_HINACLOTH_EXTENSION_MODULES_DIR}")
-
-add_custom_command(TARGET xpbd_core POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${_HINACLOTH_EXTENSION_MODULES_DIR}"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "$<TARGET_FILE:xpbd_core>"
-        "${_HINACLOTH_EXTENSION_MODULES_DIR}/$<TARGET_FILE_NAME:xpbd_core>"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_RUNTIME_DLLS:xpbd_core>
-        "${_HINACLOTH_EXTENSION_MODULES_DIR}"
-    COMMAND_EXPAND_LISTS
-    COMMENT "Copying xpbd_core module and runtime DLLs into Blender extension modules directory"
-)
-
-file(GLOB _HINACLOTH_EXAMPLES_SCRIPTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/*.py")
-hinacloth_add_blend_generation(xpbd_core ${_HINACLOTH_EXAMPLES_SCRIPTS})
-
-# ==== Tests =================================================================
-enable_testing()
-
-add_executable(test_clothdata
-    tests/test_clothdata.cpp
-)
-target_include_directories(test_clothdata PRIVATE
+target_link_libraries(xpbd_vulkan PRIVATE vulkan_visualizer xpbd_core)
+target_include_directories(xpbd_vulkan PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
-hinacloth_enable_release_tuning(test_clothdata)
 
-add_test(NAME clothdata_verification COMMAND test_clothdata)
-add_executable(test_xpbd
-    tests/test_xpbd.cpp
-    src/xpbd.cpp
-)
-target_include_directories(test_xpbd PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-use_tbb(test_xpbd)
-hinacloth_enable_release_tuning(test_xpbd)
+# Compile shaders for the example if glslc is available
+set(XPBD_SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/examples/shader)
+set(XPBD_SHADER_BIN_DIR ${CMAKE_CURRENT_BINARY_DIR}/examples/shader)
+file(MAKE_DIRECTORY ${XPBD_SHADER_BIN_DIR})
 
-add_test(NAME xpbd_benchmark COMMAND test_xpbd)
-
-
-# ==== Vulkan Visualizer ==============================================================
-if (HINACLOTH_BUILD_VULKAN_VISUALIZER)
-    add_subdirectory(vulkan-visualizer)
-    # XPBD Vulkan examples (only when visualizer is enabled)
-    add_executable(xpbd_vulkan
-        examples/xpbd_vulkan.cpp
-    )
-    target_link_libraries(xpbd_vulkan PRIVATE vulkan_visualizer)
-    hinacloth_enable_release_tuning(xpbd_vulkan)
-
-    # Compile shaders for xpbd examples
-    set(XPBD_SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/examples/shader)
-    set(XPBD_SHADER_BIN_DIR ${CMAKE_CURRENT_BINARY_DIR}/examples/shader)
-    file(MAKE_DIRECTORY ${XPBD_SHADER_BIN_DIR})
-
-    find_program(GLSLC glslc HINTS ENV VULKAN_SDK PATH_SUFFIXES Bin bin)
-    set(XPBD_SHADERS xpbd.vert xpbd.frag)
-    set(XPBD_SPV_FILES)
-    foreach (SH ${XPBD_SHADERS})
-        set(SRC ${XPBD_SHADER_SRC_DIR}/${SH})
-        set(SPV ${XPBD_SHADER_BIN_DIR}/${SH}.spv)
-        if (GLSLC)
-            add_custom_command(
-                OUTPUT ${SPV}
-                COMMAND ${GLSLC} -O -c ${SRC} -o ${SPV}
-                DEPENDS ${SRC}
-                COMMENT "[glslc] Compiling ${SH} -> ${SPV}"
-                VERBATIM
-            )
-            list(APPEND XPBD_SPV_FILES ${SPV})
-        endif ()
-    endforeach ()
-    if (XPBD_SPV_FILES)
-        add_custom_target(xpbd_shaders DEPENDS ${XPBD_SPV_FILES})
-        add_dependencies(xpbd_vulkan xpbd_shaders)
-    endif ()
-
-    # Provide shader directories to the examples
-    target_compile_definitions(xpbd_vulkan PRIVATE
-        SHADER_OUTPUT_DIR="${XPBD_SHADER_BIN_DIR}"
-        SHADER_SOURCE_DIR="${XPBD_SHADER_SRC_DIR}"
-    )
-
-    if (WIN32)
-        add_custom_command(TARGET xpbd_vulkan POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_RUNTIME_DLLS:xpbd_vulkan>
-                $<TARGET_FILE_DIR:xpbd_vulkan>
-            COMMAND_EXPAND_LISTS
+find_program(GLSLC glslc HINTS ENV VULKAN_SDK PATH_SUFFIXES Bin bin)
+set(XPBD_SHADERS xpbd.vert xpbd.frag)
+set(XPBD_SPV_FILES)
+foreach (SH ${XPBD_SHADERS})
+    set(SRC ${XPBD_SHADER_SRC_DIR}/${SH})
+    set(SPV ${XPBD_SHADER_BIN_DIR}/${SH}.spv)
+    if (GLSLC)
+        add_custom_command(
+            OUTPUT ${SPV}
+            COMMAND ${GLSLC} -O -c ${SRC} -o ${SPV}
+            DEPENDS ${SRC}
+            COMMENT "[glslc] Compiling ${SH} -> ${SPV}"
+            VERBATIM
         )
-    endif()
+        list(APPEND XPBD_SPV_FILES ${SPV})
+    endif ()
+endforeach ()
+if (XPBD_SPV_FILES)
+    add_custom_target(xpbd_shaders DEPENDS ${XPBD_SPV_FILES})
+    add_dependencies(xpbd_vulkan xpbd_shaders)
+endif ()
+
+target_compile_definitions(xpbd_vulkan PRIVATE
+    SHADER_OUTPUT_DIR="${XPBD_SHADER_BIN_DIR}"
+    SHADER_SOURCE_DIR="${XPBD_SHADER_SRC_DIR}"
+)
+
+if (WIN32)
+    add_custom_command(TARGET xpbd_vulkan POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:xpbd_vulkan>
+            $<TARGET_FILE_DIR:xpbd_vulkan>
+        COMMAND_EXPAND_LISTS
+    )
 endif()

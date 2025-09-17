@@ -4,561 +4,237 @@
 #include <cmath>
 #include <limits>
 #include <vector>
-#include <atomic>
-
-#include <tbb/blocked_range.h>
-#include <tbb/parallel_for.h>
-
-#include <immintrin.h>
 
 namespace HinaPE {
-namespace {
 
-struct IntegrationScratch {
-    std::vector<float> px;
-    std::vector<float> py;
-    std::vector<float> pz;
-};
-
-constexpr float kConstraintTolerance = 1.0e-5f;
-
-inline std::uint8_t max_color(const ColumnView<u8>& colors) {
-    if (colors.count == 0) {
-        return 0;
-    }
-    const auto span = colors.span();
-    return *std::max_element(span.begin(), span.end());
+static inline float clamp01(float x) {
+    return std::clamp(x, 0.0f, 1.0f);
 }
-
-inline void apply_delta(std::span<float>& px, std::span<float>& py, std::span<float>& pz, size_t idx, float dx, float dy, float dz, float weight) {
-    px[idx] += dx * weight;
-    py[idx] += dy * weight;
-    pz[idx] += dz * weight;
-}
-
-inline bool should_process_distance(const XPBDParams& params, const DistanceView& dist_view, size_t num_edges) {
-    return params.enable_distance_constraints && num_edges > 0 && dist_view.m > 0;
-}
-
-inline float solve_distance_constraints_serial(const DistanceView& dist_view,
-                                              std::span<float> px,
-                                              std::span<float> py,
-                                              std::span<float> pz,
-                                              std::span<float> inv_mass,
-                                              float inv_dt_sq) {
-    float max_error = 0.0f;
-
-    auto idx_i      = dist_view.i.span();
-    auto idx_j      = dist_view.j.span();
-    auto rest       = dist_view.rest.span();
-    auto lambda     = dist_view.lambda.span();
-    auto alpha      = dist_view.alpha.span();
-    auto color      = dist_view.color.span();
-
-    const std::uint8_t color_max = max_color(dist_view.color);
-
-    for (std::uint8_t color_id = 0; color_id <= color_max; ++color_id) {
-        
-        for (size_t c = 0; c < dist_view.m; ++c) {
-            if (color[c] != color_id) {
-                continue;
-            }
-
-            const std::uint32_t i = idx_i[c];
-            const std::uint32_t j = idx_j[c];
-            const float wi        = inv_mass[i];
-            const float wj        = inv_mass[j];
-            const float wsum      = wi + wj;
-            if (wsum <= 0.0f) {
-                lambda[c] = 0.0f;
-                continue;
-            }
-
-            const float diff_x = px[i] - px[j];
-            const float diff_y = py[i] - py[j];
-            const float diff_z = pz[i] - pz[j];
-            const float len_sq = diff_x * diff_x + diff_y * diff_y + diff_z * diff_z;
-            if (len_sq <= std::numeric_limits<float>::epsilon()) {
-                continue;
-            }
-            const float len         = std::sqrt(len_sq);
-            const float constraint  = len - rest[c];
-            max_error = std::max(max_error, std::fabs(constraint));
-            const float alpha_tilde = 0.0f;
-            const float denom       = wsum + alpha_tilde;
-            if (denom <= 0.0f) {
-                continue;
-            }
-
-            const float lambda_prev  = lambda[c];
-            const float delta_lambda = (-constraint - alpha_tilde * lambda_prev) / denom;
-            const float grad_scale   = delta_lambda / len;
-            const float grad_x       = diff_x * grad_scale;
-            const float grad_y       = diff_y * grad_scale;
-            const float grad_z       = diff_z * grad_scale;
-
-            lambda[c] = lambda_prev + delta_lambda;
-            alpha[c]  = alpha_tilde;
-
-            if (wi > 0.0f) {
-                apply_delta(px, py, pz, i, grad_x, grad_y, grad_z, wi);
-            }
-            if (wj > 0.0f) {
-                apply_delta(px, py, pz, j, grad_x, grad_y, grad_z, -wj);
-            }
-        }
-    }
-    return max_error;
-}
-
-inline float solve_distance_constraints_tbb(const DistanceView& dist_view,
-                                           std::span<float> px,
-                                           std::span<float> py,
-                                           std::span<float> pz,
-                                           std::span<float> inv_mass,
-                                           float inv_dt_sq) {
-    std::atomic<float> max_error{0.0f};
-
-    auto idx_i      = dist_view.i.span();
-    auto idx_j      = dist_view.j.span();
-    auto rest       = dist_view.rest.span();
-    auto lambda     = dist_view.lambda.span();
-    auto alpha      = dist_view.alpha.span();
-    auto color      = dist_view.color.span();
-
-    const std::uint8_t color_max = max_color(dist_view.color);
-
-    for (std::uint8_t color_id = 0; color_id <= color_max; ++color_id) {
-        tbb::parallel_for(tbb::blocked_range<size_t>(0, dist_view.m, 512), [&](const tbb::blocked_range<size_t>& r) {
-            float local_max = 0.0f;
-            for (size_t c = r.begin(); c != r.end(); ++c) {
-                if (color[c] != color_id) {
-                    continue;
-                }
-
-                const std::uint32_t i = idx_i[c];
-                const std::uint32_t j = idx_j[c];
-                const float wi        = inv_mass[i];
-                const float wj        = inv_mass[j];
-                const float wsum      = wi + wj;
-                if (wsum <= 0.0f) {
-                    lambda[c] = 0.0f;
-                    continue;
-                }
-
-                const float diff_x = px[i] - px[j];
-                const float diff_y = py[i] - py[j];
-                const float diff_z = pz[i] - pz[j];
-                const float len_sq = diff_x * diff_x + diff_y * diff_y + diff_z * diff_z;
-                if (len_sq <= std::numeric_limits<float>::epsilon()) {
-                    continue;
-                }
-                const float len         = std::sqrt(len_sq);
-                const float constraint  = len - rest[c];
-            local_max = std::max(local_max, std::fabs(constraint));
-                const float alpha_tilde = 0.0f;
-                const float denom       = wsum + alpha_tilde;
-                if (denom <= 0.0f) {
-                    continue;
-                }
-
-                const float lambda_prev  = lambda[c];
-                const float delta_lambda = (-constraint - alpha_tilde * lambda_prev) / denom;
-                const float grad_scale   = delta_lambda / len;
-                const float grad_x       = diff_x * grad_scale;
-                const float grad_y       = diff_y * grad_scale;
-                const float grad_z       = diff_z * grad_scale;
-
-                lambda[c] = lambda_prev + delta_lambda;
-                alpha[c]  = alpha_tilde;
-
-                if (wi > 0.0f) {
-                    apply_delta(px, py, pz, i, grad_x, grad_y, grad_z, wi);
-                }
-                if (wj > 0.0f) {
-                    apply_delta(px, py, pz, j, grad_x, grad_y, grad_z, -wj);
-                }
-            }
-            if (local_max > 0.0f) {
-                float expected = max_error.load(std::memory_order_relaxed);
-                while (expected < local_max && !max_error.compare_exchange_weak(expected, local_max, std::memory_order_relaxed)) {}
-            }
-        });
-    }
-    return max_error.load(std::memory_order_relaxed);
-}
-
-} // namespace
 
 void xpbd_step_native(ClothData& cloth, const XPBDParams& params) {
-    if (params.substeps <= 0 || params.time_step <= 0.0f) {
+    using std::size_t;
+
+    auto P = cloth.particles();
+    const size_t n = P.n;
+    if (n == 0) {
         return;
     }
 
-    const float dt             = params.time_step / static_cast<float>(params.substeps);
-    const float inv_dt         = 1.0f / dt;
-    const float inv_dt_sq      = inv_dt * inv_dt;
-    const bool use_damping     = params.velocity_damping > 0.0f;
-    const int iterations       = std::max(1, params.solver_iterations);
-    const float damping_factor = use_damping ? std::clamp(1.0f - params.velocity_damping, 0.0f, 1.0f) : 1.0f;
+    const bool use_dist = params.enable_distance_constraints && cloth.num_edges() > 0;
+    auto D = use_dist ? cloth.distance() : DistanceView{};
 
-    auto particles = cloth.particles();
-    DistanceView dist_view{};
-    const size_t edge_count = cloth.num_edges();
-    if (params.enable_distance_constraints && edge_count > 0) {
-        dist_view = cloth.distance();
+    // Precompute strides (in elements) for tight inner loops
+    const size_t spx = std::max<size_t>(1, P.px.stride_bytes / sizeof(float));
+    const size_t spy = std::max<size_t>(1, P.py.stride_bytes / sizeof(float));
+    const size_t spz = std::max<size_t>(1, P.pz.stride_bytes / sizeof(float));
+    const size_t svx = std::max<size_t>(1, P.vx.stride_bytes / sizeof(float));
+    const size_t svy = std::max<size_t>(1, P.vy.stride_bytes / sizeof(float));
+    const size_t svz = std::max<size_t>(1, P.vz.stride_bytes / sizeof(float));
+    const size_t sim = std::max<size_t>(1, P.inv_mass.stride_bytes / sizeof(float));
+    const size_t spn = std::max<size_t>(1, P.pinned.stride_bytes / sizeof(u8));
+
+    const float gx = params.gravity_x;
+    const float gy = params.gravity_y;
+    const float gz = params.gravity_z;
+
+    const int substeps = std::max(1, params.substeps);
+    const int iters    = std::max(0, params.solver_iterations);
+    const float dt     = params.time_step;
+    if (!(dt > 0.0f)) {
+        return; // nothing to do with non-positive timestep
+    }
+    const float inv_sub = 1.0f / static_cast<float>(substeps);
+    const float dt_sub  = dt * inv_sub;
+    const float dt_sub2 = dt_sub * dt_sub;
+
+    // Temporaries for velocity update (previous positions at substep start)
+    std::vector<float> px0(n), py0(n), pz0(n);
+
+    // Strides for distance structures
+    const size_t m = use_dist ? D.m : size_t{0};
+    const size_t sii = use_dist ? std::max<size_t>(1, D.i.stride_bytes / sizeof(u32)) : size_t{1};
+    const size_t sij = use_dist ? std::max<size_t>(1, D.j.stride_bytes / sizeof(u32)) : size_t{1};
+    const size_t srs = use_dist ? std::max<size_t>(1, D.rest.stride_bytes / sizeof(float)) : size_t{1};
+    const size_t scp = use_dist ? std::max<size_t>(1, D.compliance.stride_bytes / sizeof(float)) : size_t{1};
+    const size_t slm = use_dist ? std::max<size_t>(1, D.lambda.stride_bytes / sizeof(float)) : size_t{1};
+    const size_t sal = use_dist ? std::max<size_t>(1, D.alpha.stride_bytes / sizeof(float)) : size_t{1};
+    const size_t sco = use_dist ? std::max<size_t>(1, D.color.stride_bytes / sizeof(u8)) : size_t{1};
+
+    const float vel_damp = clamp01(params.velocity_damping);
+
+    // Reset lambdas for hard constraints at the beginning of the time step (unless per-substep)
+    if (use_dist && m > 0 && !params.reset_hard_lambda_each_substep) {
+        for (size_t c = 0; c < m; ++c) {
+            const float comp = D.compliance.data[c * scp];
+            if (!(comp > 0.0f)) {
+                D.lambda.data[c * slm] = 0.0f;
+            }
+        }
     }
 
-    std::span<float> px       = particles.px.span();
-    std::span<float> py       = particles.py.span();
-    std::span<float> pz       = particles.pz.span();
-    std::span<float> vx       = particles.vx.span();
-    std::span<float> vy       = particles.vy.span();
-    std::span<float> vz       = particles.vz.span();
-    std::span<float> inv_mass = particles.inv_mass.span();
-    std::span<u8> pinned       = particles.pinned.span();
-
-    IntegrationScratch scratch;
-    scratch.px.resize(px.size());
-    scratch.py.resize(py.size());
-    scratch.pz.resize(pz.size());
-
-    const float gx = params.gravity[0];
-    const float gy = params.gravity[1];
-    const float gz = params.gravity[2];
-
-    for (int step_index = 0; step_index < params.substeps; ++step_index) {
-        for (size_t i = 0; i < px.size(); ++i) {
-            scratch.px[i] = px[i];
-            scratch.py[i] = py[i];
-            scratch.pz[i] = pz[i];
-
-            if (pinned[i]) {
-                vx[i] = vy[i] = vz[i] = 0.0f;
-                continue;
-            }
-
-            vx[i] += gx * dt;
-            vy[i] += gy * dt;
-            vz[i] += gz * dt;
-
-            px[i] += vx[i] * dt;
-            py[i] += vy[i] * dt;
-            pz[i] += vz[i] * dt;
-        }
-
-        if (should_process_distance(params, dist_view, edge_count)) {
-            for (int iteration = 0; iteration < iterations; ++iteration) {
-                const float error = solve_distance_constraints_serial(dist_view, px, py, pz, inv_mass, inv_dt_sq);
-                if (error <= kConstraintTolerance) {
-                    break;
+    for (int s = 0; s < substeps; ++s) {
+        // Optionally reset hard constraint lambdas at substep granularity
+        if (use_dist && m > 0 && params.reset_hard_lambda_each_substep) {
+            for (size_t c = 0; c < m; ++c) {
+                const float comp = D.compliance.data[c * scp];
+                if (!(comp > 0.0f)) {
+                    D.lambda.data[c * slm] = 0.0f;
                 }
             }
         }
 
-        for (size_t i = 0; i < px.size(); ++i) {
-            if (pinned[i]) {
-                px[i] = scratch.px[i];
-                py[i] = scratch.py[i];
-                pz[i] = scratch.pz[i];
-                vx[i] = vy[i] = vz[i] = 0.0f;
-                continue;
-            }
+        // Save previous positions for velocity update; integrate external acceleration and predict positions
+        for (size_t i = 0; i < n; ++i) {
+            const size_t ipx = i * spx, ipy = i * spy, ipz = i * spz;
+            const size_t ivx = i * svx, ivy = i * svy, ivz = i * svz;
+            const size_t iim = i * sim, ipn = i * spn;
 
-            vx[i] = (px[i] - scratch.px[i]) * inv_dt;
-            vy[i] = (py[i] - scratch.py[i]) * inv_dt;
-            vz[i] = (pz[i] - scratch.pz[i]) * inv_dt;
+            float& px = P.px.data[ipx];
+            float& py = P.py.data[ipy];
+            float& pz = P.pz.data[ipz];
+            float& vx = P.vx.data[ivx];
+            float& vy = P.vy.data[ivy];
+            float& vz = P.vz.data[ivz];
+            const float w = P.inv_mass.data[iim];
+            const bool pinned = P.pinned.data[ipn] != 0;
 
-            if (use_damping && damping_factor < 1.0f) {
-                vx[i] *= damping_factor;
-                vy[i] *= damping_factor;
-                vz[i] *= damping_factor;
-            }
-        }
-    }
-}
+            // Store originals
+            px0[i] = px; py0[i] = py; pz0[i] = pz;
 
-void xpbd_step_tbb(ClothData& cloth, const XPBDParams& params) {
-    if (params.substeps <= 0 || params.time_step <= 0.0f) {
-        return;
-    }
-
-    const float dt             = params.time_step / static_cast<float>(params.substeps);
-    const float inv_dt         = 1.0f / dt;
-    const float inv_dt_sq      = inv_dt * inv_dt;
-    const bool use_damping     = params.velocity_damping > 0.0f;
-    const int iterations       = std::max(1, params.solver_iterations);
-    const float damping_factor = use_damping ? std::clamp(1.0f - params.velocity_damping, 0.0f, 1.0f) : 1.0f;
-
-    auto particles = cloth.particles();
-    DistanceView dist_view{};
-    const size_t edge_count = cloth.num_edges();
-    if (params.enable_distance_constraints && edge_count > 0) {
-        dist_view = cloth.distance();
-    }
-
-    std::span<float> px       = particles.px.span();
-    std::span<float> py       = particles.py.span();
-    std::span<float> pz       = particles.pz.span();
-    std::span<float> vx       = particles.vx.span();
-    std::span<float> vy       = particles.vy.span();
-    std::span<float> vz       = particles.vz.span();
-    std::span<float> inv_mass = particles.inv_mass.span();
-    std::span<u8> pinned       = particles.pinned.span();
-
-    IntegrationScratch scratch;
-    scratch.px.resize(px.size());
-    scratch.py.resize(py.size());
-    scratch.pz.resize(pz.size());
-
-    const float gx = params.gravity[0];
-    const float gy = params.gravity[1];
-    const float gz = params.gravity[2];
-
-    for (int step_index = 0; step_index < params.substeps; ++step_index) {
-        tbb::parallel_for(tbb::blocked_range<size_t>(0, px.size(), 256), [&](const tbb::blocked_range<size_t>& r) {
-            for (size_t i = r.begin(); i != r.end(); ++i) {
-                scratch.px[i] = px[i];
-                scratch.py[i] = py[i];
-                scratch.pz[i] = pz[i];
-
-                if (pinned[i]) {
-                    vx[i] = vy[i] = vz[i] = 0.0f;
-                    continue;
-                }
-
-                vx[i] += gx * dt;
-                vy[i] += gy * dt;
-                vz[i] += gz * dt;
-
-                px[i] += vx[i] * dt;
-                py[i] += vy[i] * dt;
-                pz[i] += vz[i] * dt;
-            }
-        });
-
-        if (should_process_distance(params, dist_view, edge_count)) {
-            for (int iteration = 0; iteration < iterations; ++iteration) {
-                const float error = solve_distance_constraints_tbb(dist_view, px, py, pz, inv_mass, inv_dt_sq);
-                if (error <= kConstraintTolerance) {
-                    break;
-                }
+            if (!pinned && w > 0.0f) {
+                // Semi-implicit Euler: v += a*dt, x += v*dt
+                vx += gx * dt_sub;
+                vy += gy * dt_sub;
+                vz += gz * dt_sub;
+                px += vx * dt_sub;
+                py += vy * dt_sub;
+                pz += vz * dt_sub;
             }
         }
 
-        tbb::parallel_for(tbb::blocked_range<size_t>(0, px.size(), 256), [&](const tbb::blocked_range<size_t>& r) {
-            for (size_t i = r.begin(); i != r.end(); ++i) {
-                if (pinned[i]) {
-                    px[i] = scratch.px[i];
-                    py[i] = scratch.py[i];
-                    pz[i] = scratch.pz[i];
-                    vx[i] = vy[i] = vz[i] = 0.0f;
-                    continue;
-                }
-
-                vx[i] = (px[i] - scratch.px[i]) * inv_dt;
-                vy[i] = (py[i] - scratch.py[i]) * inv_dt;
-                vz[i] = (pz[i] - scratch.pz[i]) * inv_dt;
-
-                if (use_damping && damping_factor < 1.0f) {
-                    vx[i] *= damping_factor;
-                    vy[i] *= damping_factor;
-                    vz[i] *= damping_factor;
+        // Constraint solve (XPBD) — distance constraints only for now
+        if (use_dist && iters > 0 && m > 0) {
+            // Prepare optional color buckets (0..255)
+            std::array<std::vector<size_t>, 256> buckets;
+            if (params.use_color_ordering) {
+                for (size_t c = 0; c < m; ++c) {
+                    const u8 col = D.color.data[c * sco];
+                    buckets[col].push_back(c);
                 }
             }
-        });
-    }
-}
 
-#ifdef __AVX2__
-namespace {
-inline __m256i load_pinned_mask8(const u8* base) {
-    __m128i bytes = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(base));
-    __m128i lo    = _mm_cvtepu8_epi32(bytes);
-    __m128i hi    = _mm_cvtepu8_epi32(_mm_srli_si128(bytes, 4));
-    __m256i pins  = _mm256_insertf128_si256(_mm256_castsi128_si256(lo), hi, 1);
-    return pins;
-}
-} // namespace
-#endif
+            auto solve_constraint = [&](size_t c){
+                    const size_t ci = c * sii;
+                    const size_t cj = c * sij;
+                    const size_t cr = c * srs;
+                    const size_t cc = c * scp;
+                    const size_t cl = c * slm;
+                    const size_t ca = c * sal;
 
-void xpbd_step_avx2(ClothData& cloth, const XPBDParams& params) {
-#ifndef __AVX2__
-    xpbd_step_native(cloth, params);
-#else
-    if (params.substeps <= 0 || params.time_step <= 0.0f) {
-        return;
-    }
+                    const u32 i = D.i.data[ci];
+                    const u32 j = D.j.data[cj];
+                    const float rest = D.rest.data[cr];
+                    const float compliance = D.compliance.data[cc];
 
-    const float dt             = params.time_step / static_cast<float>(params.substeps);
-    const float inv_dt         = 1.0f / dt;
-    const float inv_dt_sq      = inv_dt * inv_dt;
-    const bool use_damping     = params.velocity_damping > 0.0f;
-    const int iterations       = std::max(1, params.solver_iterations);
-    const float damping_factor = use_damping ? std::clamp(1.0f - params.velocity_damping, 0.0f, 1.0f) : 1.0f;
+                    const size_t ipx = static_cast<size_t>(i) * spx; const size_t jpx = static_cast<size_t>(j) * spx;
+                    const size_t ipy = static_cast<size_t>(i) * spy; const size_t jpy = static_cast<size_t>(j) * spy;
+                    const size_t ipz = static_cast<size_t>(i) * spz; const size_t jpz = static_cast<size_t>(j) * spz;
+                    const size_t iim = static_cast<size_t>(i) * sim; const size_t jim = static_cast<size_t>(j) * sim;
+                    const size_t ipn = static_cast<size_t>(i) * spn; const size_t jpn = static_cast<size_t>(j) * spn;
 
-    auto particles = cloth.particles();
-    DistanceView dist_view{};
-    const size_t edge_count = cloth.num_edges();
-    if (params.enable_distance_constraints && edge_count > 0) {
-        dist_view = cloth.distance();
-    }
+                    float& xi = P.px.data[ipx];
+                    float& yi = P.py.data[ipy];
+                    float& zi = P.pz.data[ipz];
+                    float& xj = P.px.data[jpx];
+                    float& yj = P.py.data[jpy];
+                    float& zj = P.pz.data[jpz];
 
-    std::span<float> px       = particles.px.span();
-    std::span<float> py       = particles.py.span();
-    std::span<float> pz       = particles.pz.span();
-    std::span<float> vx       = particles.vx.span();
-    std::span<float> vy       = particles.vy.span();
-    std::span<float> vz       = particles.vz.span();
-    std::span<float> inv_mass = particles.inv_mass.span();
-    std::span<u8> pinned      = particles.pinned.span();
+                    const float wi = (P.pinned.data[ipn] != 0) ? 0.0f : P.inv_mass.data[iim];
+                    const float wj = (P.pinned.data[jpn] != 0) ? 0.0f : P.inv_mass.data[jim];
 
-    IntegrationScratch scratch;
-    scratch.px.resize(px.size());
-    scratch.py.resize(py.size());
-    scratch.pz.resize(pz.size());
+                    const float dx = xi - xj;
+                    const float dy = yi - yj;
+                    const float dz = zi - zj;
+                    const float len2 = dx * dx + dy * dy + dz * dz;
+                    const float eps = 1e-12f;
+                    if (len2 < eps) {
+                        return; // avoid division by zero
+                    }
+                    const float len = std::sqrt(len2);
+                    const float C = len - rest;
 
-    const float gx = params.gravity[0];
-    const float gy = params.gravity[1];
-    const float gz = params.gravity[2];
+                    // XPBD: alpha_tilde = compliance / dt^2
+                    const float alpha_tilde = compliance / dt_sub2;
+                    // Expose computed alpha_tilde for debugging/inspection
+                    D.alpha.data[ca] = alpha_tilde;
 
-    const __m256 dt_vec      = _mm256_set1_ps(dt);
-    const __m256 gx_dt_vec   = _mm256_set1_ps(gx * dt);
-    const __m256 gy_dt_vec   = _mm256_set1_ps(gy * dt);
-    const __m256 gz_dt_vec   = _mm256_set1_ps(gz * dt);
-    const __m256 zero        = _mm256_setzero_ps();
-    const __m256 inv_dt_vec  = _mm256_set1_ps(inv_dt);
-    const __m256 damping_vec = _mm256_set1_ps(damping_factor);
-    const __m256i zero_i     = _mm256_setzero_si256();
+                    float& lambda_c = D.lambda.data[cl];
+                    const float denom = wi + wj + alpha_tilde;
+                    if (denom <= 0.0f) {
+                        return;
+                    }
+                    const float dlambda = (-C - alpha_tilde * lambda_c) / denom;
+                    lambda_c += dlambda;
 
-    for (int step_index = 0; step_index < params.substeps; ++step_index) {
-        size_t i = 0;
-        for (; i + 8 <= px.size(); i += 8) {
-            __m256 px_old = _mm256_loadu_ps(px.data() + i);
-            __m256 py_old = _mm256_loadu_ps(py.data() + i);
-            __m256 pz_old = _mm256_loadu_ps(pz.data() + i);
-            _mm256_storeu_ps(scratch.px.data() + i, px_old);
-            _mm256_storeu_ps(scratch.py.data() + i, py_old);
-            _mm256_storeu_ps(scratch.pz.data() + i, pz_old);
+                    const float nx = dx / len;
+                    const float ny = dy / len;
+                    const float nz = dz / len;
 
-            __m256 vx_val = _mm256_loadu_ps(vx.data() + i);
-            __m256 vy_val = _mm256_loadu_ps(vy.data() + i);
-            __m256 vz_val = _mm256_loadu_ps(vz.data() + i);
+                    const float s_i = wi * dlambda;
+                    const float s_j = wj * dlambda;
 
-            vx_val = _mm256_add_ps(vx_val, gx_dt_vec);
-            vy_val = _mm256_add_ps(vy_val, gy_dt_vec);
-            vz_val = _mm256_add_ps(vz_val, gz_dt_vec);
+                    xi += s_i * nx;
+                    yi += s_i * ny;
+                    zi += s_i * nz;
+                    xj -= s_j * nx;
+                    yj -= s_j * ny;
+                    zj -= s_j * nz;
+                };
 
-            __m256 px_new = _mm256_add_ps(_mm256_mul_ps(vx_val, dt_vec), px_old);
-            __m256 py_new = _mm256_add_ps(_mm256_mul_ps(vy_val, dt_vec), py_old);
-            __m256 pz_new = _mm256_add_ps(_mm256_mul_ps(vz_val, dt_vec), pz_old);
-
-            __m256i pins = load_pinned_mask8(pinned.data() + i);
-            __m256 mask  = _mm256_castsi256_ps(_mm256_cmpgt_epi32(pins, zero_i));
-
-            vx_val = _mm256_blendv_ps(vx_val, zero, mask);
-            vy_val = _mm256_blendv_ps(vy_val, zero, mask);
-            vz_val = _mm256_blendv_ps(vz_val, zero, mask);
-
-            px_new = _mm256_blendv_ps(px_new, px_old, mask);
-            py_new = _mm256_blendv_ps(py_new, py_old, mask);
-            pz_new = _mm256_blendv_ps(pz_new, pz_old, mask);
-
-            _mm256_storeu_ps(px.data() + i, px_new);
-            _mm256_storeu_ps(py.data() + i, py_new);
-            _mm256_storeu_ps(pz.data() + i, pz_new);
-            _mm256_storeu_ps(vx.data() + i, vx_val);
-            _mm256_storeu_ps(vy.data() + i, vy_val);
-            _mm256_storeu_ps(vz.data() + i, vz_val);
-        }
-        for (; i < px.size(); ++i) {
-            scratch.px[i] = px[i];
-            scratch.py[i] = py[i];
-            scratch.pz[i] = pz[i];
-
-            if (pinned[i]) {
-                vx[i] = vy[i] = vz[i] = 0.0f;
-                continue;
-            }
-
-            vx[i] += gx * dt;
-            vy[i] += gy * dt;
-            vz[i] += gz * dt;
-
-            px[i] += vx[i] * dt;
-            py[i] += vy[i] * dt;
-            pz[i] += vz[i] * dt;
-        }
-
-        if (should_process_distance(params, dist_view, edge_count)) {
-            for (int iteration = 0; iteration < iterations; ++iteration) {
-                const float error = solve_distance_constraints_serial(dist_view, px, py, pz, inv_mass, inv_dt_sq);
-                if (error <= kConstraintTolerance) {
-                    break;
+            for (int iter = 0; iter < iters; ++iter) {
+                if (params.use_color_ordering) {
+                    for (int col = 0; col < 256; ++col) {
+                        const auto& list = buckets[(size_t)col];
+                        for (size_t idx = 0; idx < list.size(); ++idx) {
+                            solve_constraint(list[idx]);
+                        }
+                    }
+                } else {
+                    for (size_t c = 0; c < m; ++c) {
+                        solve_constraint(c);
+                    }
                 }
             }
         }
 
-        i = 0;
-        for (; i + 8 <= px.size(); i += 8) {
-            __m256 px_curr = _mm256_loadu_ps(px.data() + i);
-            __m256 py_curr = _mm256_loadu_ps(py.data() + i);
-            __m256 pz_curr = _mm256_loadu_ps(pz.data() + i);
+        // Update velocities from positions and apply damping
+        for (size_t i = 0; i < n; ++i) {
+            const size_t ipx = i * spx, ipy = i * spy, ipz = i * spz;
+            const size_t ivx = i * svx, ivy = i * svy, ivz = i * svz;
+            const size_t iim = i * sim, ipn = i * spn;
 
-            __m256 px_prev = _mm256_loadu_ps(scratch.px.data() + i);
-            __m256 py_prev = _mm256_loadu_ps(scratch.py.data() + i);
-            __m256 pz_prev = _mm256_loadu_ps(scratch.pz.data() + i);
+            float& px = P.px.data[ipx];
+            float& py = P.py.data[ipy];
+            float& pz = P.pz.data[ipz];
+            float& vx = P.vx.data[ivx];
+            float& vy = P.vy.data[ivy];
+            float& vz = P.vz.data[ivz];
+            const float w = P.inv_mass.data[iim];
+            const bool pinned = P.pinned.data[ipn] != 0;
 
-            __m256 vx_new = _mm256_mul_ps(_mm256_sub_ps(px_curr, px_prev), inv_dt_vec);
-            __m256 vy_new = _mm256_mul_ps(_mm256_sub_ps(py_curr, py_prev), inv_dt_vec);
-            __m256 vz_new = _mm256_mul_ps(_mm256_sub_ps(pz_curr, pz_prev), inv_dt_vec);
+            const float vnx = (px - px0[i]) / dt_sub;
+            const float vny = (py - py0[i]) / dt_sub;
+            const float vnz = (pz - pz0[i]) / dt_sub;
 
-            if (use_damping && damping_factor < 1.0f) {
-                vx_new = _mm256_mul_ps(vx_new, damping_vec);
-                vy_new = _mm256_mul_ps(vy_new, damping_vec);
-                vz_new = _mm256_mul_ps(vz_new, damping_vec);
-            }
-
-            __m256i pins = load_pinned_mask8(pinned.data() + i);
-            __m256 mask  = _mm256_castsi256_ps(_mm256_cmpgt_epi32(pins, zero_i));
-
-            vx_new = _mm256_blendv_ps(vx_new, zero, mask);
-            vy_new = _mm256_blendv_ps(vy_new, zero, mask);
-            vz_new = _mm256_blendv_ps(vz_new, zero, mask);
-
-            px_curr = _mm256_blendv_ps(px_curr, px_prev, mask);
-            py_curr = _mm256_blendv_ps(py_curr, py_prev, mask);
-            pz_curr = _mm256_blendv_ps(pz_curr, pz_prev, mask);
-
-            _mm256_storeu_ps(vx.data() + i, vx_new);
-            _mm256_storeu_ps(vy.data() + i, vy_new);
-            _mm256_storeu_ps(vz.data() + i, vz_new);
-            _mm256_storeu_ps(px.data() + i, px_curr);
-            _mm256_storeu_ps(py.data() + i, py_curr);
-            _mm256_storeu_ps(pz.data() + i, pz_curr);
-        }
-        for (; i < px.size(); ++i) {
-            if (pinned[i]) {
-                px[i] = scratch.px[i];
-                py[i] = scratch.py[i];
-                pz[i] = scratch.pz[i];
-                vx[i] = vy[i] = vz[i] = 0.0f;
-                continue;
-            }
-
-            vx[i] = (px[i] - scratch.px[i]) * inv_dt;
-            vy[i] = (py[i] - scratch.py[i]) * inv_dt;
-            vz[i] = (pz[i] - scratch.pz[i]) * inv_dt;
-
-            if (use_damping && damping_factor < 1.0f) {
-                vx[i] *= damping_factor;
-                vy[i] *= damping_factor;
-                vz[i] *= damping_factor;
+            if (!pinned && w > 0.0f) {
+                vx = vnx * (1.0f - vel_damp);
+                vy = vny * (1.0f - vel_damp);
+                vz = vnz * (1.0f - vel_damp);
+            } else {
+                vx = 0.0f; vy = 0.0f; vz = 0.0f;
             }
         }
     }
-#endif
 }
 
 } // namespace HinaPE
-
