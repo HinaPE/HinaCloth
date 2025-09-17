@@ -13,4 +13,16 @@ __all__ = [
     "HinaClothState",
     "register_properties",
     "unregister_properties",
+    "register",
+    "unregister",
 ]
+
+
+
+def register() -> None:
+    register_properties()
+
+
+
+def unregister() -> None:
+    unregister_properties()

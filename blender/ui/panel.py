@@ -32,22 +32,15 @@ class HINACLOTH_PT_main(Panel):
         col.separator()
 
         status_col = col.column(align=True)
-        modal_icon = "PLAY" if state.is_modal_running else "PAUSE"
-        modal_text = "Running" if state.is_modal_running else "Stopped"
-        status_col.label(text=f"Modal: {modal_text}", icon=modal_icon)
-        bake_icon = "RADIOBUT_ON" if state.bake_cache_active else "RADIOBUT_OFF"
-        bake_text = "Active" if state.bake_cache_active else "Idle"
-        status_col.label(text=f"Bake Cache: {bake_text}", icon=bake_icon)
+        cache_icon = "RADIOBUT_ON" if state.bake_cache_active else "RADIOBUT_OFF"
+        cache_status = "Active" if state.bake_cache_active else "Idle"
+        status_col.label(text=f"Bake Cache: {cache_status}", icon=cache_icon)
         if state.active_object:
             status_col.label(text=f"Object: {state.active_object}")
         status_col.label(text=f"Backend: {state.active_backend}")
         status_col.separator()
 
         controls = col.column(align=True)
-        row = controls.row(align=True)
-        start_op = row.operator("hinacloth.start_modal", text="Start Modal", icon="PLAY")
-        start_op.reset_state = True
-        row.operator("hinacloth.stop_modal", text="Stop", icon="PAUSE")
         controls.operator("hinacloth.bake_simulation", icon="REC")
         controls.operator("hinacloth.clear_bake", icon="TRASH")
 

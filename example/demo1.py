@@ -1,10 +1,12 @@
-"""Demo script that builds a simple HinaCloth test scene inside Blender.""" 
+"""Demo script that builds a bake-ready HinaCloth test scene inside Blender."""
 from __future__ import annotations
 
+import argparse
+import importlib
 import math
 import pathlib
 import sys
-import importlib
+from typing import Optional
 
 import bpy
 
@@ -28,7 +30,6 @@ def ensure_hinacloth_registered() -> None:
 
 def reset_scene() -> None:
     bpy.ops.wm.read_homefile(use_empty=True)
-    # Remove everything created by the home file so the scene starts empty.
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
 
@@ -50,7 +51,11 @@ def setup_world() -> None:
 
     bpy.ops.object.light_add(type="SUN", location=(3.0, -6.0, 12.0))
     sun = bpy.context.active_object
-    sun.rotation_euler = (math.radians(50.0), math.radians(20.0), math.radians(25.0))
+    sun.rotation_euler = (
+        math.radians(50.0),
+        math.radians(20.0),
+        math.radians(25.0),
+    )
     sun.data.energy = 4.5
 
 
@@ -63,7 +68,11 @@ def configure_material(mat: bpy.types.Material, base_color, roughness: float) ->
 
 
 def create_ground() -> bpy.types.Object:
-    bpy.ops.mesh.primitive_plane_add(size=6.0, enter_editmode=False, location=(0.0, 0.0, 0.0))
+    bpy.ops.mesh.primitive_plane_add(
+        size=6.0,
+        enter_editmode=False,
+        location=(0.0, 0.0, 0.0),
+    )
     ground = bpy.context.active_object
     ground.name = "Ground"
 
@@ -97,7 +106,7 @@ def create_cloth(width: int = 40, height: int = 40) -> bpy.types.Object:
     return cloth
 
 
-def register_hinacloth_settings(cloth_object: bpy.types.Object, width: int, height: int) -> None:
+def configure_hinacloth(cloth_object: bpy.types.Object, width: int, height: int, *, start: int, end: int) -> None:
     ensure_hinacloth_registered()
     scene = bpy.context.scene
 
@@ -105,6 +114,9 @@ def register_hinacloth_settings(cloth_object: bpy.types.Object, width: int, heig
         raise RuntimeError(
             f"Mesh vertex count {len(cloth_object.data.vertices)} does not match requested grid {width}x{height}."
         )
+
+    scene.frame_start = start
+    scene.frame_end = end
 
     settings = scene.hinacloth_settings
     settings.target_object = cloth_object
@@ -114,26 +126,84 @@ def register_hinacloth_settings(cloth_object: bpy.types.Object, width: int, heig
     settings.substeps = 4
     settings.solver_iterations = 12
     settings.backend = "NATIVE"
-    settings.start_frame = 1
-    settings.end_frame = 150
+    settings.start_frame = start
+    settings.end_frame = end
+    settings.status_message = "Scene initialized; ready to bake."
 
     state = scene.hinacloth_state
-    state.status_message = "Scene initialized."
+    state.bake_cache_active = False
+    state.active_backend = settings.backend
+    state.active_object = cloth_object.name
 
 
-def build_demo(scene_path: pathlib.Path | None = None, grid_width: int = 40, grid_height: int = 40) -> None:
+def run_bake_if_available(clear_existing: bool = True) -> bool:
+    try:
+        result = bpy.ops.hinacloth.bake_simulation(
+            "EXEC_DEFAULT",
+            clear_existing=clear_existing,
+        )
+    except Exception as exc:  # pragma: no cover - Blender operator guard
+        print(f"[HinaCloth demo] Bake failed to start: {exc}")
+        return False
+
+    finished = "FINISHED" in result
+    message = bpy.context.scene.hinacloth_settings.status_message
+    print(f"[HinaCloth demo] Bake result: {result} — {message}")
+    return finished
+
+
+def build_demo(
+    scene_path: Optional[pathlib.Path] = None,
+    *,
+    grid_width: int = 40,
+    grid_height: int = 40,
+    frame_start: int = 1,
+    frame_end: int = 150,
+    bake: bool = False,
+) -> None:
     reset_scene()
     setup_world()
     create_ground()
     cloth = create_cloth(grid_width, grid_height)
-    register_hinacloth_settings(cloth, grid_width, grid_height)
+    configure_hinacloth(
+        cloth,
+        grid_width,
+        grid_height,
+        start=frame_start,
+        end=frame_end,
+    )
+
+    if bake:
+        run_bake_if_available(clear_existing=True)
 
     if scene_path is not None:
         bpy.ops.wm.save_mainfile(filepath=str(scene_path))
 
 
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Generate the HinaCloth demo scene.")
+    parser.add_argument("--width", type=int, default=40, help="Cloth grid width (particles).")
+    parser.add_argument("--height", type=int, default=40, help="Cloth grid height (particles).")
+    parser.add_argument("--start", type=int, default=1, help="Timeline start frame for the bake window.")
+    parser.add_argument("--end", type=int, default=150, help="Timeline end frame for the bake window.")
+    parser.add_argument("--no-bake", action="store_true", help="Skip triggering the bake operator after setup.")
+    parser.add_argument(
+        "--output",
+        type=pathlib.Path,
+        default=pathlib.Path(__file__).resolve().parent / "demo1.blend",
+        help="Path to save the generated .blend file.",
+    )
+    return parser.parse_args(argv)
+
+
 if __name__ == "__main__":
-    script_dir = pathlib.Path(__file__).resolve().parent
-    default_path = script_dir / "demo1.blend"
-    build_demo(default_path, grid_width=40, grid_height=40)
-    print(f"HinaCloth demo scene saved to {default_path}")
+    namespace = _parse_args(sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else [])
+    build_demo(
+        namespace.output,
+        grid_width=namespace.width,
+        grid_height=namespace.height,
+        frame_start=namespace.start,
+        frame_end=namespace.end,
+        bake=not namespace.no_bake,
+    )
+    print(f"HinaCloth demo scene saved to {namespace.output}")

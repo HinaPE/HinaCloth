@@ -12,9 +12,11 @@ __all__ = ["HINACLOTH_OT_bake_simulation", "HINACLOTH_OT_clear_bake"]
 
 
 class HINACLOTH_OT_bake_simulation(Operator):
+    """Bake XPBD frames into the scene cache."""
+
     bl_idname = "hinacloth.bake_simulation"
     bl_label = "Bake Simulation"
-    bl_description = "Simulate the cloth over the timeline and cache the frames for playback."
+    bl_description = "Simulate the cloth over the timeline and cache frames for playback."
     bl_options = {"REGISTER"}
 
     clear_existing: BoolProperty(
@@ -37,9 +39,6 @@ class HINACLOTH_OT_bake_simulation(Operator):
             return {"CANCELLED"}
         if obj.mode != "OBJECT":
             self.report({"ERROR"}, "Switch the object back to Object Mode before baking.")
-            return {"CANCELLED"}
-        if state.is_modal_running:
-            self.report({"ERROR"}, "Stop the modal simulation before baking.")
             return {"CANCELLED"}
 
         if self.clear_existing:
@@ -65,11 +64,14 @@ class HINACLOTH_OT_bake_simulation(Operator):
             )
         except SolverUnavailableError as exc:
             wm.progress_end()
+            settings.status_message = str(exc)
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
         except Exception as exc:  # pragma: no cover - runtime safeguard
             wm.progress_end()
-            self.report({"ERROR"}, f"Bake failed: {exc}")
+            message = f"Bake failed: {exc}"
+            settings.status_message = message
+            self.report({"ERROR"}, message)
             return {"CANCELLED"}
 
         wm.progress_end()
@@ -85,21 +87,24 @@ class HINACLOTH_OT_bake_simulation(Operator):
 
 
 class HINACLOTH_OT_clear_bake(Operator):
+    """Clear cached bake frames from the scene."""
+
     bl_idname = "hinacloth.clear_bake"
     bl_label = "Clear Cached Frames"
     bl_description = "Remove the baked cache for the active scene."
-    bl_options = {"REGISTER", "INTERNAL"}
+    bl_options = {"REGISTER"}
 
     def execute(self, context: bpy.types.Context):
         scene = context.scene
         state = scene.hinacloth_state
-        settings: HinaClothSettings = scene.hinacloth_settings
 
         if not state.bake_cache_active:
-            self.report({"INFO"}, "No baked cache to clear.")
+            self.report({"INFO"}, "No bake cache registered for this scene.")
             return {"CANCELLED"}
 
         clear_frame_cache(scene)
         state.bake_cache_active = False
+        state.active_object = ""
+        settings: HinaClothSettings = scene.hinacloth_settings
         settings.status_message = "Cleared baked cache."
         return {"FINISHED"}

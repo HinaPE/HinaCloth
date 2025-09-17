@@ -32,7 +32,7 @@ def _cloth_object_poll(_self, obj: Object) -> bool:
 
 
 class HinaClothSettings(PropertyGroup):
-    """User configurable parameters exposed by the add-on UI."""
+    """User configurable parameters exposed by the extension UI."""
 
     target_object: PointerProperty(
         name="Cloth Object",
@@ -126,7 +126,7 @@ class HinaClothSettings(PropertyGroup):
 
     status_message: StringProperty(
         name="Status",
-        description="Latest status reported by the solver or operators.",
+        description="Latest status reported by bake operators.",
         default="Ready.",
     )
 
@@ -166,12 +166,6 @@ class HinaClothSettings(PropertyGroup):
 class HinaClothState(PropertyGroup):
     """Runtime state stored on the scene for UI feedback."""
 
-    is_modal_running: BoolProperty(
-        name="Modal Running",
-        description="True while the modal operator keeps stepping the solver.",
-        default=False,
-    )
-
     bake_cache_active: BoolProperty(
         name="Bake Cache Active",
         description="Indicates whether a frame cache is currently registered.",
@@ -180,7 +174,7 @@ class HinaClothState(PropertyGroup):
 
     active_backend: EnumProperty(
         name="Active Backend",
-        description="Backend currently driving the solver instance.",
+        description="Backend that generated the cached bake.",
         items=_BACKEND_ITEMS,
         default="NATIVE",
     )

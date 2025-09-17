@@ -1,4 +1,4 @@
-"""Blender entrypoint for the HinaCloth extension."""
+"""Blender extension entry point for HinaCloth."""
 from __future__ import annotations
 
 import importlib
@@ -8,21 +8,13 @@ from pathlib import Path
 from typing import Final
 
 import bpy
+from bpy.app.handlers import persistent
 
-from . import ops, props, solver, ui
 from .solver.manager import release_all
 
-bl_info: Final = {
-    "name": "HinaCloth Extension",
-    "author": "HinaCloth Team",
-    "version": (1, 0, 0),
-    "blender": (4, 5, 3),
-    "location": "View3D > Sidebar > HinaCloth",
-    "description": "XPBD cloth benchmarking utilities integrated into Blender.",
-    "category": "Physics",
-}
-
-_LOGGER = logging.getLogger("hinacloth")
+_LOGGER: Final = logging.getLogger("hinacloth")
+_SUBMODULE_NAMES: Final = ("props", "ops", "ui")
+_IMPORTED_SUBMODULES: list[object] = []
 _HANDLERS_INSTALLED = False
 _MODULES_PATH_ADDED = False
 
@@ -51,7 +43,16 @@ def _ensure_modules_path() -> None:
     _MODULES_PATH_ADDED = True
 
 
-def _on_file_loaded(_dummy):  # pragma: no cover - Blender handler
+def _load_submodules() -> list[object]:
+    if not _IMPORTED_SUBMODULES:
+        for name in _SUBMODULE_NAMES:
+            module = importlib.import_module(f"{__name__}.{name}")
+            _IMPORTED_SUBMODULES.append(module)
+    return _IMPORTED_SUBMODULES
+
+
+@persistent  # pragma: no cover - Blender handler
+def _on_file_loaded(_dummy):
     release_all()
 
 
@@ -77,17 +78,17 @@ def _remove_handlers() -> None:
 def register() -> None:
     _configure_logging()
     _ensure_modules_path()
-    props.register_properties()
-    ops.register()
-    ui.register()
+    for module in _load_submodules():
+        if hasattr(module, "register"):
+            module.register()
     _install_handlers()
     _LOGGER.info("HinaCloth extension registered.")
 
 
 def unregister() -> None:
     _remove_handlers()
-    ui.unregister()
-    ops.unregister()
-    props.unregister_properties()
+    for module in reversed(list(_load_submodules())):
+        if hasattr(module, "unregister"):
+            module.unregister()
     release_all()
     _LOGGER.info("HinaCloth extension unregistered.")

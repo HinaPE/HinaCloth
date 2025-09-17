@@ -6,7 +6,7 @@ HinaCloth is an XPBD (eXtended Position-Based Dynamics) cloth simulation benchma
 ## Features
 - **XPBD solver** with native, Intel TBB, and AVX2 paths sharing the same numerical scheme.
 - **PyBind11 module (`xpbd_core`)** automatically built against Blender’s Python, copied into the extension package with its runtime dependencies.
-- **Blender extension** laid out per the 4.5 extension standard (ops/props/solver/ui), supporting modal playback, timeline bake, and backend switching.
+- **Blender extension** laid out per the 4.5 extension standard (ops/props/solver/ui), supporting timeline bake workflows and backend switching.
 - **Example scenes** in `example/`; CMake runs Blender in background mode after each build and produces matching `.blend` files alongside the scripts.
 - **Benchmark harness** (`tests/test_xpbd.cpp`) reporting latency statistics *and* XPBD constraint residual metrics (mean/RMS/max, absolute and relative).
 
@@ -34,7 +34,7 @@ cmake -S . -B build -DHINACLOTH_BLENDER_EXECUTABLE="C:/Program Files/Blender Fou
 ## Using the Blender Extension
 1. Add the `blender/` folder as an extension source in Blender 4.5.
 2. Enable “HinaCloth Extension” (panel under *View3D → Sidebar → HinaCloth*).
-3. Pick a cloth mesh (or open the generated demo), choose the solver backend, then run *Start Modal* or *Bake Simulation*.
+3. Pick a cloth mesh (or open the generated demo), choose the solver backend, then run *Bake Simulation* to cache the frames.
 
 ## Example Script
 - `example/demo1.py` builds a 40×40 cloth scene, registers the extension, and saves `demo1.blend`:
