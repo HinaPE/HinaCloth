@@ -7,75 +7,78 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Build a static library with current src contents only
-file(GLOB HINACLOTH_SRC
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
-)
-
-add_library(xpbd_core STATIC ${HINACLOTH_SRC})
-target_include_directories(xpbd_core PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-
-# Reasonable optimization flags for Release (no external deps)
+# ----------------------------------------------------------------------------
+# Core library: libhinacloth (XPBD implementation)
+# ----------------------------------------------------------------------------
+file(GLOB HINACLOTH_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
+add_library(libhinacloth STATIC ${HINACLOTH_SRC})
+target_include_directories(libhinacloth PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
 if (MSVC)
-    target_compile_options(xpbd_core PRIVATE
-        $<$<CONFIG:Release>:/O2 /Ot /Oi /fp:fast>
-    )
+    target_compile_options(libhinacloth PRIVATE $<$<CONFIG:Release>:/O2 /Ot /Oi /fp:fast>)
 else()
-    target_compile_options(xpbd_core PRIVATE
-        $<$<CONFIG:Release>:-O3 -ffast-math -fomit-frame-pointer>
-    )
+    target_compile_options(libhinacloth PRIVATE $<$<CONFIG:Release>:-O3 -ffast-math -fomit-frame-pointer>)
 endif()
 
-# ---- Vulkan visualizer example (no changes inside subdir) ----
-add_subdirectory(vulkan-visualizer)
+# Backward-compatible alias (if existing code refers to xpbd_core)
+add_library(xpbd_core ALIAS libhinacloth)
 
-add_executable(xpbd_vulkan
-    examples/xpbd_vulkan.cpp
-)
-target_link_libraries(xpbd_vulkan PRIVATE vulkan_visualizer xpbd_core)
-target_include_directories(xpbd_vulkan PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
+# ----------------------------------------------------------------------------
+# Optionally build Vulkan visualizer and examples
+# ----------------------------------------------------------------------------
+option(HINACLOTH_BUILD_VULKAN_VISUALIZER "Build Vulkan visualizer and examples" OFF)
+if (HINACLOTH_BUILD_VULKAN_VISUALIZER)
+    add_subdirectory(vulkan-visualizer)
 
-# Compile shaders for the example if glslc is available
-set(XPBD_SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/examples/shader)
-set(XPBD_SHADER_BIN_DIR ${CMAKE_CURRENT_BINARY_DIR}/examples/shader)
-file(MAKE_DIRECTORY ${XPBD_SHADER_BIN_DIR})
+    # XPBD visualization example (examples/example_xpbd.cpp)
+    set(EXAMPLES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/examples)
+    set(SHADER_SRC_DIR ${EXAMPLES_DIR}/shader)
+    set(SHADER_BIN_DIR ${CMAKE_CURRENT_BINARY_DIR}/examples/shader)
+    file(MAKE_DIRECTORY ${SHADER_BIN_DIR})
 
-find_program(GLSLC glslc HINTS ENV VULKAN_SDK PATH_SUFFIXES Bin bin)
-set(XPBD_SHADERS xpbd.vert xpbd.frag)
-set(XPBD_SPV_FILES)
-foreach (SH ${XPBD_SHADERS})
-    set(SRC ${XPBD_SHADER_SRC_DIR}/${SH})
-    set(SPV ${XPBD_SHADER_BIN_DIR}/${SH}.spv)
-    if (GLSLC)
-        add_custom_command(
-            OUTPUT ${SPV}
-            COMMAND ${GLSLC} -O -c ${SRC} -o ${SPV}
-            DEPENDS ${SRC}
-            COMMENT "[glslc] Compiling ${SH} -> ${SPV}"
-            VERBATIM
-        )
-        list(APPEND XPBD_SPV_FILES ${SPV})
+    find_program(GLSLC glslc HINTS ENV VULKAN_SDK PATH_SUFFIXES Bin bin)
+    if (NOT GLSLC)
+        message(WARNING "glslc not found. Expect precompiled SPIR-V in ${SHADER_BIN_DIR}.")
     endif ()
-endforeach ()
-if (XPBD_SPV_FILES)
-    add_custom_target(xpbd_shaders DEPENDS ${XPBD_SPV_FILES})
-    add_dependencies(xpbd_vulkan xpbd_shaders)
-endif ()
 
-target_compile_definitions(xpbd_vulkan PRIVATE
-    SHADER_OUTPUT_DIR="${XPBD_SHADER_BIN_DIR}"
-    SHADER_SOURCE_DIR="${XPBD_SHADER_SRC_DIR}"
-)
+    set(XPBD_SHADERS xpbd.vert xpbd.frag)
+    set(XPBD_SPV)
+    foreach (SH ${XPBD_SHADERS})
+        set(SRC ${SHADER_SRC_DIR}/${SH})
+        set(SPV ${SHADER_BIN_DIR}/${SH}.spv)
+        if (GLSLC)
+            add_custom_command(
+                    OUTPUT ${SPV}
+                    COMMAND ${GLSLC} -O -c ${SRC} -o ${SPV}
+                    DEPENDS ${SRC}
+                    COMMENT "[glslc] ${SH} -> ${SPV}"
+                    VERBATIM
+            )
+            list(APPEND XPBD_SPV ${SPV})
+        endif ()
+    endforeach ()
 
-if (WIN32)
-    add_custom_command(TARGET xpbd_vulkan POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_RUNTIME_DLLS:xpbd_vulkan>
-            $<TARGET_FILE_DIR:xpbd_vulkan>
-        COMMAND_EXPAND_LISTS
+    if (XPBD_SPV)
+        add_custom_target(example_xpbd_shaders DEPENDS ${XPBD_SPV})
+    endif ()
+
+    add_executable(example_xpbd ${EXAMPLES_DIR}/example_xpbd.cpp)
+    if (TARGET example_xpbd_shaders)
+        add_dependencies(example_xpbd example_xpbd_shaders)
+    endif ()
+
+    target_compile_definitions(example_xpbd PRIVATE
+            SHADER_OUTPUT_DIR="${SHADER_BIN_DIR}"
     )
-endif()
+
+    target_link_libraries(example_xpbd PRIVATE vulkan_visualizer libhinacloth)
+
+    if (WIN32)
+        add_custom_command(TARGET example_xpbd POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_RUNTIME_DLLS:example_xpbd>
+                $<TARGET_FILE_DIR:example_xpbd>
+            COMMAND_EXPAND_LISTS
+        )
+    endif ()
+endif ()
