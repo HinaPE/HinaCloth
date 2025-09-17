@@ -69,8 +69,8 @@ add_custom_command(TARGET xpbd_core POST_BUILD
     COMMENT "Copying xpbd_core module and runtime DLLs into Blender extension modules directory"
 )
 
-file(GLOB _HINACLOTH_EXAMPLE_SCRIPTS "${CMAKE_CURRENT_SOURCE_DIR}/example/*.py")
-hinacloth_add_blend_generation(xpbd_core ${_HINACLOTH_EXAMPLE_SCRIPTS})
+file(GLOB _HINACLOTH_EXAMPLES_SCRIPTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/*.py")
+hinacloth_add_blend_generation(xpbd_core ${_HINACLOTH_EXAMPLES_SCRIPTS})
 
 # ==== Tests =================================================================
 enable_testing()
@@ -100,5 +100,52 @@ add_test(NAME xpbd_benchmark COMMAND test_xpbd)
 # ==== Vulkan Visualizer ==============================================================
 if (HINACLOTH_BUILD_VULKAN_VISUALIZER)
     add_subdirectory(vulkan-visualizer)
-endif()
+    # XPBD Vulkan examples (only when visualizer is enabled)
+    add_executable(xpbd_vulkan
+        examples/xpbd_vulkan.cpp
+    )
+    target_link_libraries(xpbd_vulkan PRIVATE vulkan_visualizer)
+    hinacloth_enable_release_tuning(xpbd_vulkan)
 
+    # Compile shaders for xpbd examples
+    set(XPBD_SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/examples/shader)
+    set(XPBD_SHADER_BIN_DIR ${CMAKE_CURRENT_BINARY_DIR}/examples/shader)
+    file(MAKE_DIRECTORY ${XPBD_SHADER_BIN_DIR})
+
+    find_program(GLSLC glslc HINTS ENV VULKAN_SDK PATH_SUFFIXES Bin bin)
+    set(XPBD_SHADERS xpbd.vert xpbd.frag)
+    set(XPBD_SPV_FILES)
+    foreach (SH ${XPBD_SHADERS})
+        set(SRC ${XPBD_SHADER_SRC_DIR}/${SH})
+        set(SPV ${XPBD_SHADER_BIN_DIR}/${SH}.spv)
+        if (GLSLC)
+            add_custom_command(
+                OUTPUT ${SPV}
+                COMMAND ${GLSLC} -O -c ${SRC} -o ${SPV}
+                DEPENDS ${SRC}
+                COMMENT "[glslc] Compiling ${SH} -> ${SPV}"
+                VERBATIM
+            )
+            list(APPEND XPBD_SPV_FILES ${SPV})
+        endif ()
+    endforeach ()
+    if (XPBD_SPV_FILES)
+        add_custom_target(xpbd_shaders DEPENDS ${XPBD_SPV_FILES})
+        add_dependencies(xpbd_vulkan xpbd_shaders)
+    endif ()
+
+    # Provide shader directories to the examples
+    target_compile_definitions(xpbd_vulkan PRIVATE
+        SHADER_OUTPUT_DIR="${XPBD_SHADER_BIN_DIR}"
+        SHADER_SOURCE_DIR="${XPBD_SHADER_SRC_DIR}"
+    )
+
+    if (WIN32)
+        add_custom_command(TARGET xpbd_vulkan POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_RUNTIME_DLLS:xpbd_vulkan>
+                $<TARGET_FILE_DIR:xpbd_vulkan>
+            COMMAND_EXPAND_LISTS
+        )
+    endif()
+endif()
