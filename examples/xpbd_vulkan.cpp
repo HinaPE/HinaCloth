@@ -5,6 +5,8 @@
 
 #include "vk_engine.h"
 #include "xpbd.h"
+#include "xpbd2.h"
+#include "cloth_data_2.h"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -17,7 +19,6 @@
 #include <string>
 #include <vector>
 
-using HinaPE::ClothData;
 using HinaPE::XPBDParams;
 using HinaPE::u32;
 
@@ -73,9 +74,8 @@ public:
                 p.reset_hard_lambda_each_substep = sim_.resetHardEachSubstep;
                 p.use_color_ordering = sim_.useColorOrdering;
                 // propagate compliance to all edges
-                auto E = cloth_.distance();
-                for (size_t i=0;i<E.m;++i) E.compliance.data[i] = sim_.compliance;
-                xpbd_step_native(cloth_, p);
+                for (size_t i=0;i<cloth2_.numEdges();++i) cloth2_.compliance[i] = sim_.compliance;
+                xpbd_step_native2(cloth2_, p);
                 accumulator_ -= step;
             }
             if (accumulator_ < 0.0) accumulator_ = 0.0;
@@ -187,26 +187,25 @@ private:
         const int W = std::max(2, sim_.W);
         const int H = std::max(2, sim_.H);
         const size_t N = (size_t)W * (size_t)H;
-        cloth_.allocate_particles(N);
-        auto P = cloth_.particles();
+        cloth2_.allocateParticles(N);
         float halfW = 0.5f * (W - 1) * sim_.spacing;
         float halfH = 0.5f * (H - 1) * sim_.spacing;
         float2 origin{cam_.center.x - halfW, cam_.center.y + halfH};
         for (int y=0;y<H;++y){
             for (int x=0;x<W;++x){
                 size_t id = (size_t)y * (size_t)W + (size_t)x;
-                P.px.data[id] = origin.x + x*sim_.spacing;
-                P.py.data[id] = origin.y - y*sim_.spacing;
-                P.pz.data[id] = 0.0f;
-                P.vx.data[id] = 0.0f; P.vy.data[id] = 0.0f; P.vz.data[id] = 0.0f;
-                P.inv_mass.data[id] = 1.0f; P.pinned.data[id] = 0;
+                cloth2_.px[id] = origin.x + x*sim_.spacing;
+                cloth2_.py[id] = origin.y - y*sim_.spacing;
+                cloth2_.pz[id] = 0.0f;
+                cloth2_.vx[id] = 0.0f; cloth2_.vy[id] = 0.0f; cloth2_.vz[id] = 0.0f;
+                cloth2_.inv_mass[id] = 1.0f; cloth2_.pinned[id] = 0;
             }
         }
         // edges
         std::vector<u32> ei, ej; std::vector<float> rest, comp, lam, alp; std::vector<HinaPE::u8> cols;
         auto addEdge=[&](int x0,int y0,int x1,int y1){
             size_t i=(size_t)y0*W + (size_t)x0; size_t j=(size_t)y1*W + (size_t)x1;
-            float dx=P.px.data[i]-P.px.data[j]; float dy=P.py.data[i]-P.py.data[j];
+            float dx=cloth2_.px[i]-cloth2_.px[j]; float dy=cloth2_.py[i]-cloth2_.py[j];
             float r=std::sqrt(dx*dx+dy*dy);
             ei.push_back((u32)i); ej.push_back((u32)j); rest.push_back(r);
             comp.push_back(sim_.compliance); lam.push_back(0.0f); alp.push_back(0.0f);
@@ -214,16 +213,21 @@ private:
             cols.push_back(color);
         };
         for(int y=0;y<H;++y){ for(int x=0;x<W;++x){ if(x+1<W) addEdge(x,y,x+1,y); if(y+1<H) addEdge(x,y,x,y+1);} }
-        cloth_.allocate_distance(ei.size()); auto E=cloth_.distance();
-        std::copy(ei.begin(),ei.end(),E.i.data); std::copy(ej.begin(),ej.end(),E.j.data);
-        std::copy(rest.begin(),rest.end(),E.rest.data); std::copy(comp.begin(),comp.end(),E.compliance.data);
-        std::copy(lam.begin(),lam.end(),E.lambda.data); std::copy(alp.begin(),alp.end(),E.alpha.data);
-        if (E.color.data) { for (size_t k=0;k<cols.size();++k) E.color.data[k] = cols[k]; }
+        cloth2_.allocateDistance(ei.size());
+        for (size_t k=0;k<ei.size();++k) {
+            cloth2_.edge_i[k] = ei[k];
+            cloth2_.edge_j[k] = ej[k];
+            cloth2_.rest[k]   = rest[k];
+            cloth2_.compliance[k] = comp[k];
+            cloth2_.lambda[k] = lam[k];
+            cloth2_.alpha[k]  = alp[k];
+            cloth2_.color[k]  = cols[k];
+        }
 
         // pin
-        P.pinned.data[0] = sim_.pinL ? 1u : 0u; P.inv_mass.data[0] = sim_.pinL ? 0.0f : 1.0f;
+        cloth2_.pinned[0] = sim_.pinL ? 1u : 0u; cloth2_.inv_mass[0] = sim_.pinL ? 0.0f : 1.0f;
         size_t right = (size_t)W - 1;
-        P.pinned.data[right] = sim_.pinR ? 1u : 0u; P.inv_mass.data[right] = sim_.pinR ? 0.0f : 1.0f;
+        cloth2_.pinned[right] = sim_.pinR ? 1u : 0u; cloth2_.inv_mass[right] = sim_.pinR ? 0.0f : 1.0f;
 
         fitView();
         createPipelinesRequested_ = true;
@@ -232,13 +236,13 @@ private:
 
     void fitView() {
         // Center cloth and choose pixelsPerUnit such that it fits view
-        auto P = cloth_.particles();
-        if (P.n == 0) return;
-        float minx = P.px.data[0], maxx = P.px.data[0];
-        float miny = P.py.data[0], maxy = P.py.data[0];
-        for (size_t i=1;i<P.n;++i){
-            minx = std::min(minx, P.px.data[i]); maxx = std::max(maxx, P.px.data[i]);
-            miny = std::min(miny, P.py.data[i]); maxy = std::max(maxy, P.py.data[i]);
+        const size_t n = cloth2_.numParticles();
+        if (n == 0) return;
+        float minx = cloth2_.px[0], maxx = cloth2_.px[0];
+        float miny = cloth2_.py[0], maxy = cloth2_.py[0];
+        for (size_t i=1;i<n;++i){
+            minx = std::min(minx, cloth2_.px[i]); maxx = std::max(maxx, cloth2_.px[i]);
+            miny = std::min(miny, cloth2_.py[i]); maxy = std::max(maxy, cloth2_.py[i]);
         }
         cam_.center = { (minx+maxx)*0.5f, (miny+maxy)*0.5f };
         float wx = std::max(1e-6f, maxx-minx);
@@ -255,7 +259,7 @@ private:
         int substeps{1};
         int iterations{10};
         float damping{0.01f};
-        float compliance{1e-5f};
+        float compliance{1e-9f};
         float2 gravity{0.0f,-9.81f};
         int W{32}; int H{32}; float spacing{0.03f};
         bool pinL{true}; bool pinR{true};
@@ -271,7 +275,7 @@ private:
         ImVec4 ptColor{1.0f, 0.94f, 0.47f, 1.0f};
     } sim_{};
 
-    ClothData cloth_{};
+    HinaPE::ClothData2 cloth2_{};
     Camera2D cam_{};
     ImVec2 viewport_{1280.0f, 720.0f};
     double accumulator_{0.0};
@@ -346,9 +350,8 @@ private:
     }
 
     void ensureBuffers(const EngineContext& eng) {
-        auto P = cloth_.particles(); auto E = cloth_.distance();
-        uint32_t needPts = (uint32_t)P.n;
-        uint32_t needLines = (uint32_t)E.m * 2u;
+        uint32_t needPts = (uint32_t)cloth2_.numParticles();
+        uint32_t needLines = (uint32_t)cloth2_.numEdges() * 2u;
         if (needPts > pointsCapacity_) { destroyBuffer(eng.allocator, vbPoints_, vbPointsAlloc_); createBuffer(eng.allocator, needPts * sizeof(float2), vbPoints_, vbPointsAlloc_, &vbPointsMapped_); pointsCapacity_ = needPts; }
         if (needLines > linesCapacity_) { destroyBuffer(eng.allocator, vbLines_, vbLinesAlloc_); createBuffer(eng.allocator, needLines * sizeof(float2), vbLines_, vbLinesAlloc_, &vbLinesMapped_); linesCapacity_ = needLines; }
     }
@@ -364,19 +367,18 @@ private:
     }
 
     void uploadVertexData() {
-        auto P = cloth_.particles(); auto E = cloth_.distance();
         // points
-        pointsCount_ = (uint32_t)P.n;
+        pointsCount_ = (uint32_t)cloth2_.numParticles();
         if (vbPointsMapped_ && pointsCount_) {
             auto* dst = reinterpret_cast<float2*>(vbPointsMapped_);
-            for (uint32_t i=0;i<pointsCount_;++i) dst[i] = float2{P.px.data[i], P.py.data[i]};
+            for (uint32_t i=0;i<pointsCount_;++i) dst[i] = float2{cloth2_.px[i], cloth2_.py[i]};
         }
         // lines
-        linesCount_ = (uint32_t)E.m * 2u;
+        linesCount_ = (uint32_t)cloth2_.numEdges() * 2u;
         if (vbLinesMapped_ && linesCount_) {
             auto* dst = reinterpret_cast<float2*>(vbLinesMapped_);
             uint32_t k = 0;
-            for (uint32_t c=0;c<(uint32_t)E.m;++c){ u32 i=E.i.data[c], j=E.j.data[c]; dst[k++] = {P.px.data[i], P.py.data[i]}; dst[k++] = {P.px.data[j], P.py.data[j]}; }
+            for (uint32_t c=0;c<(uint32_t)cloth2_.numEdges();++c){ u32 i=cloth2_.edge_i[c], j=cloth2_.edge_j[c]; dst[k++] = {cloth2_.px[i], cloth2_.py[i]}; dst[k++] = {cloth2_.px[j], cloth2_.py[j]}; }
         }
     }
 };
