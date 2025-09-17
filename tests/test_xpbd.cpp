@@ -87,7 +87,7 @@ ClothBlueprint makeGridBlueprint(std::size_t width, std::size_t height, float sp
         bp.edge_i.push_back(i);
         bp.edge_j.push_back(j);
         bp.rest.push_back(spacing);
-        bp.compliance.push_back(1.0e-6f);
+        bp.compliance.push_back(0.0f);
         bp.lambda.push_back(0.0f);
         bp.alpha.push_back(0.0f);
         bp.color.push_back(color);

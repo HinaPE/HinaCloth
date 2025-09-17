@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <vector>
+#include <atomic>
 
 #include <tbb/blocked_range.h>
 #include <tbb/parallel_for.h>
@@ -18,6 +19,8 @@ struct IntegrationScratch {
     std::vector<float> py;
     std::vector<float> pz;
 };
+
+constexpr float kConstraintTolerance = 1.0e-5f;
 
 inline std::uint8_t max_color(const ColumnView<u8>& colors) {
     if (colors.count == 0) {
@@ -37,16 +40,17 @@ inline bool should_process_distance(const XPBDParams& params, const DistanceView
     return params.enable_distance_constraints && num_edges > 0 && dist_view.m > 0;
 }
 
-inline void solve_distance_constraints_serial(const DistanceView& dist_view,
+inline float solve_distance_constraints_serial(const DistanceView& dist_view,
                                               std::span<float> px,
                                               std::span<float> py,
                                               std::span<float> pz,
                                               std::span<float> inv_mass,
                                               float inv_dt_sq) {
+    float max_error = 0.0f;
+
     auto idx_i      = dist_view.i.span();
     auto idx_j      = dist_view.j.span();
     auto rest       = dist_view.rest.span();
-    auto compliance = dist_view.compliance.span();
     auto lambda     = dist_view.lambda.span();
     auto alpha      = dist_view.alpha.span();
     auto color      = dist_view.color.span();
@@ -54,6 +58,7 @@ inline void solve_distance_constraints_serial(const DistanceView& dist_view,
     const std::uint8_t color_max = max_color(dist_view.color);
 
     for (std::uint8_t color_id = 0; color_id <= color_max; ++color_id) {
+        
         for (size_t c = 0; c < dist_view.m; ++c) {
             if (color[c] != color_id) {
                 continue;
@@ -78,7 +83,8 @@ inline void solve_distance_constraints_serial(const DistanceView& dist_view,
             }
             const float len         = std::sqrt(len_sq);
             const float constraint  = len - rest[c];
-            const float alpha_tilde = compliance[c] * inv_dt_sq;
+            max_error = std::max(max_error, std::fabs(constraint));
+            const float alpha_tilde = 0.0f;
             const float denom       = wsum + alpha_tilde;
             if (denom <= 0.0f) {
                 continue;
@@ -102,18 +108,20 @@ inline void solve_distance_constraints_serial(const DistanceView& dist_view,
             }
         }
     }
+    return max_error;
 }
 
-inline void solve_distance_constraints_tbb(const DistanceView& dist_view,
+inline float solve_distance_constraints_tbb(const DistanceView& dist_view,
                                            std::span<float> px,
                                            std::span<float> py,
                                            std::span<float> pz,
                                            std::span<float> inv_mass,
                                            float inv_dt_sq) {
+    std::atomic<float> max_error{0.0f};
+
     auto idx_i      = dist_view.i.span();
     auto idx_j      = dist_view.j.span();
     auto rest       = dist_view.rest.span();
-    auto compliance = dist_view.compliance.span();
     auto lambda     = dist_view.lambda.span();
     auto alpha      = dist_view.alpha.span();
     auto color      = dist_view.color.span();
@@ -122,6 +130,7 @@ inline void solve_distance_constraints_tbb(const DistanceView& dist_view,
 
     for (std::uint8_t color_id = 0; color_id <= color_max; ++color_id) {
         tbb::parallel_for(tbb::blocked_range<size_t>(0, dist_view.m, 512), [&](const tbb::blocked_range<size_t>& r) {
+            float local_max = 0.0f;
             for (size_t c = r.begin(); c != r.end(); ++c) {
                 if (color[c] != color_id) {
                     continue;
@@ -146,7 +155,8 @@ inline void solve_distance_constraints_tbb(const DistanceView& dist_view,
                 }
                 const float len         = std::sqrt(len_sq);
                 const float constraint  = len - rest[c];
-                const float alpha_tilde = compliance[c] * inv_dt_sq;
+            local_max = std::max(local_max, std::fabs(constraint));
+                const float alpha_tilde = 0.0f;
                 const float denom       = wsum + alpha_tilde;
                 if (denom <= 0.0f) {
                     continue;
@@ -169,8 +179,13 @@ inline void solve_distance_constraints_tbb(const DistanceView& dist_view,
                     apply_delta(px, py, pz, j, grad_x, grad_y, grad_z, -wj);
                 }
             }
+            if (local_max > 0.0f) {
+                float expected = max_error.load(std::memory_order_relaxed);
+                while (expected < local_max && !max_error.compare_exchange_weak(expected, local_max, std::memory_order_relaxed)) {}
+            }
         });
     }
+    return max_error.load(std::memory_order_relaxed);
 }
 
 } // namespace
@@ -184,6 +199,7 @@ void xpbd_step_native(ClothData& cloth, const XPBDParams& params) {
     const float inv_dt         = 1.0f / dt;
     const float inv_dt_sq      = inv_dt * inv_dt;
     const bool use_damping     = params.velocity_damping > 0.0f;
+    const int iterations       = std::max(1, params.solver_iterations);
     const float damping_factor = use_damping ? std::clamp(1.0f - params.velocity_damping, 0.0f, 1.0f) : 1.0f;
 
     auto particles = cloth.particles();
@@ -232,7 +248,12 @@ void xpbd_step_native(ClothData& cloth, const XPBDParams& params) {
         }
 
         if (should_process_distance(params, dist_view, edge_count)) {
-            solve_distance_constraints_serial(dist_view, px, py, pz, inv_mass, inv_dt_sq);
+            for (int iteration = 0; iteration < iterations; ++iteration) {
+                const float error = solve_distance_constraints_serial(dist_view, px, py, pz, inv_mass, inv_dt_sq);
+                if (error <= kConstraintTolerance) {
+                    break;
+                }
+            }
         }
 
         for (size_t i = 0; i < px.size(); ++i) {
@@ -266,6 +287,7 @@ void xpbd_step_tbb(ClothData& cloth, const XPBDParams& params) {
     const float inv_dt         = 1.0f / dt;
     const float inv_dt_sq      = inv_dt * inv_dt;
     const bool use_damping     = params.velocity_damping > 0.0f;
+    const int iterations       = std::max(1, params.solver_iterations);
     const float damping_factor = use_damping ? std::clamp(1.0f - params.velocity_damping, 0.0f, 1.0f) : 1.0f;
 
     auto particles = cloth.particles();
@@ -316,7 +338,12 @@ void xpbd_step_tbb(ClothData& cloth, const XPBDParams& params) {
         });
 
         if (should_process_distance(params, dist_view, edge_count)) {
-            solve_distance_constraints_tbb(dist_view, px, py, pz, inv_mass, inv_dt_sq);
+            for (int iteration = 0; iteration < iterations; ++iteration) {
+                const float error = solve_distance_constraints_tbb(dist_view, px, py, pz, inv_mass, inv_dt_sq);
+                if (error <= kConstraintTolerance) {
+                    break;
+                }
+            }
         }
 
         tbb::parallel_for(tbb::blocked_range<size_t>(0, px.size(), 256), [&](const tbb::blocked_range<size_t>& r) {
@@ -367,6 +394,7 @@ void xpbd_step_avx2(ClothData& cloth, const XPBDParams& params) {
     const float inv_dt         = 1.0f / dt;
     const float inv_dt_sq      = inv_dt * inv_dt;
     const bool use_damping     = params.velocity_damping > 0.0f;
+    const int iterations       = std::max(1, params.solver_iterations);
     const float damping_factor = use_damping ? std::clamp(1.0f - params.velocity_damping, 0.0f, 1.0f) : 1.0f;
 
     auto particles = cloth.particles();
@@ -463,7 +491,12 @@ void xpbd_step_avx2(ClothData& cloth, const XPBDParams& params) {
         }
 
         if (should_process_distance(params, dist_view, edge_count)) {
-            solve_distance_constraints_serial(dist_view, px, py, pz, inv_mass, inv_dt_sq);
+            for (int iteration = 0; iteration < iterations; ++iteration) {
+                const float error = solve_distance_constraints_serial(dist_view, px, py, pz, inv_mass, inv_dt_sq);
+                if (error <= kConstraintTolerance) {
+                    break;
+                }
+            }
         }
 
         i = 0;

@@ -1,8 +1,9 @@
 #include "vulkan/vk_engine.h"
+#include "vulkan/cloth_renderer.h"
 
 std::unique_ptr<IRenderer> CreateDefaultComputeRenderer()
 {
-    return nullptr;
+    return CreateClothRenderer();
 }
 
 int main()
