@@ -1,3 +1,6 @@
+// ============================================================================
+// VMA Integration
+// ============================================================================
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4100 4189 4127 4324)
@@ -30,12 +33,251 @@
 
 #include "VkBootstrap.h"
 #include <imgui.h>
+#include "backends/imgui_impl_sdl3.h"
+#include "backends/imgui_impl_vulkan.h"
 #include <algorithm>
+#include <array>
+#include <limits>
 #include <chrono>
 #include <ranges>
 #include <stdexcept>
 #include <string>
 
+// ============================================================================
+// Dear ImGui Integration Helpers
+// ============================================================================
+struct VulkanEngine::UiSystem {
+    using PanelFn = std::function<void()>;
+
+    bool init(SDL_Window* window,
+              VkInstance instance,
+              VkPhysicalDevice physicalDevice,
+              VkDevice device,
+              VkQueue graphicsQueue,
+              uint32_t graphicsQueueFamily,
+              VkFormat swapchainFormat,
+              uint32_t swapchainImageCount) {
+        std::array<VkDescriptorPoolSize, 11> pool_sizes{{
+            {VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
+            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
+            {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
+            {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000},
+            {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
+            {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000},
+            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
+            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
+            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000},
+            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000},
+            {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000},
+        }};
+
+        VkDescriptorPoolCreateInfo pool_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+            .maxSets = 1000u * static_cast<uint32_t>(pool_sizes.size()),
+            .poolSizeCount = static_cast<uint32_t>(pool_sizes.size()),
+            .pPoolSizes = pool_sizes.data(),
+        };
+        VK_CHECK(vkCreateDescriptorPool(device, &pool_info, nullptr, &pool_));
+
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+
+        ImGuiIO& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+        io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+
+        ImGui::StyleColorsDark();
+        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+            ImGuiStyle& style = ImGui::GetStyle();
+            style.WindowRounding = 0.0f;
+            style.Colors[ImGuiCol_WindowBg].w = 1.0f;
+        }
+
+        if (!ImGui_ImplSDL3_InitForVulkan(window)) {
+            ImGui::DestroyContext();
+            vkDestroyDescriptorPool(device, pool_, nullptr);
+            pool_ = VK_NULL_HANDLE;
+            return false;
+        }
+
+        ImGui_ImplVulkan_InitInfo init_info{};
+        init_info.ApiVersion = VK_API_VERSION_1_3;
+        init_info.Instance = instance;
+        init_info.PhysicalDevice = physicalDevice;
+        init_info.Device = device;
+        init_info.QueueFamily = graphicsQueueFamily;
+        init_info.Queue = graphicsQueue;
+        init_info.DescriptorPool = pool_;
+        init_info.MinImageCount = swapchainImageCount;
+        init_info.ImageCount = swapchainImageCount;
+        init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+        init_info.Allocator = nullptr;
+        init_info.CheckVkResultFn = [](VkResult res) { VK_CHECK(res); };
+        init_info.UseDynamicRendering = VK_TRUE;
+
+        VkPipelineRenderingCreateInfo rendering_info{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+            .pNext = nullptr,
+            .viewMask = 0,
+            .colorAttachmentCount = 1,
+            .pColorAttachmentFormats = &swapchainFormat,
+            .depthAttachmentFormat = VK_FORMAT_UNDEFINED,
+            .stencilAttachmentFormat = VK_FORMAT_UNDEFINED,
+        };
+        init_info.PipelineRenderingCreateInfo = rendering_info;
+
+        if (!ImGui_ImplVulkan_Init(&init_info)) {
+            ImGui_ImplSDL3_Shutdown();
+            ImGui::DestroyContext();
+            vkDestroyDescriptorPool(device, pool_, nullptr);
+            pool_ = VK_NULL_HANDLE;
+            return false;
+        }
+
+        color_format_ = swapchainFormat;
+        initialized_ = true;
+        return true;
+    }
+
+    void shutdown(VkDevice device) {
+        if (!initialized_) return;
+        ImGui_ImplVulkan_Shutdown();
+        ImGui_ImplSDL3_Shutdown();
+        ImGui::DestroyContext();
+        if (pool_ != VK_NULL_HANDLE) {
+            vkDestroyDescriptorPool(device, pool_, nullptr);
+            pool_ = VK_NULL_HANDLE;
+        }
+        initialized_ = false;
+    }
+
+    void process_event(const SDL_Event* e) {
+        if (!initialized_ || !e) return;
+        ImGui_ImplSDL3_ProcessEvent(e);
+    }
+
+    void new_frame() {
+        if (!initialized_) return;
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplSDL3_NewFrame();
+        ImGui::NewFrame();
+        for (auto& panel : panels_) { panel(); }
+    }
+
+    void render_overlay(VkCommandBuffer cmd,
+                        VkImage swapchainImage,
+                        VkImageView swapchainView,
+                        VkExtent2D extent,
+                        VkImageLayout previousLayout) {
+        if (!initialized_) return;
+
+        VkImageMemoryBarrier2 to_color{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .pNext = nullptr,
+            .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+            .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT,
+            .oldLayout = previousLayout,
+            .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .image = swapchainImage,
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 1u, 0u, 1u},
+        };
+        VkDependencyInfo dep_color{
+            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .pNext = nullptr,
+            .dependencyFlags = 0u,
+            .memoryBarrierCount = 0u,
+            .pMemoryBarriers = nullptr,
+            .bufferMemoryBarrierCount = 0u,
+            .pBufferMemoryBarriers = nullptr,
+            .imageMemoryBarrierCount = 1u,
+            .pImageMemoryBarriers = &to_color,
+        };
+        vkCmdPipelineBarrier2(cmd, &dep_color);
+
+        VkRenderingAttachmentInfo color_attachment{
+            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .pNext = nullptr,
+            .imageView = swapchainView,
+            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .resolveMode = VK_RESOLVE_MODE_NONE,
+            .resolveImageView = VK_NULL_HANDLE,
+            .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .clearValue = {},
+        };
+        VkRenderingInfo rendering_info{
+            .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+            .pNext = nullptr,
+            .flags = 0u,
+            .renderArea = {{0, 0}, extent},
+            .layerCount = 1u,
+            .viewMask = 0u,
+            .colorAttachmentCount = 1u,
+            .pColorAttachments = &color_attachment,
+            .pDepthAttachment = nullptr,
+            .pStencilAttachment = nullptr,
+        };
+        vkCmdBeginRendering(cmd, &rendering_info);
+
+        ImGui::Render();
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+
+        vkCmdEndRendering(cmd);
+
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+            ImGui::UpdatePlatformWindows();
+            ImGui::RenderPlatformWindowsDefault();
+        }
+
+        VkImageMemoryBarrier2 to_present{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .pNext = nullptr,
+            .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_NONE,
+            .dstAccessMask = 0u,
+            .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            .image = swapchainImage,
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 1u, 0u, 1u},
+        };
+        VkDependencyInfo dep_present{
+            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .pNext = nullptr,
+            .dependencyFlags = 0u,
+            .memoryBarrierCount = 0u,
+            .pMemoryBarriers = nullptr,
+            .bufferMemoryBarrierCount = 0u,
+            .pBufferMemoryBarriers = nullptr,
+            .imageMemoryBarrierCount = 1u,
+            .pImageMemoryBarriers = &to_present,
+        };
+        vkCmdPipelineBarrier2(cmd, &dep_present);
+    }
+
+    void add_panel(PanelFn fn) { panels_.push_back(std::move(fn)); }
+
+    void set_min_image_count(uint32_t count) {
+        if (!initialized_) return;
+        ImGui_ImplVulkan_SetMinImageCount(count);
+    }
+
+private:
+    VkDescriptorPool pool_{VK_NULL_HANDLE};
+    bool initialized_{false};
+    VkFormat color_format_{};
+    std::vector<PanelFn> panels_;
+};
+
+// ============================================================================
+// DescriptorAllocator Implementation
+// ============================================================================
 void DescriptorAllocator::init_pool(VkDevice device, uint32_t maxSets, std::span<const PoolSizeRatio> ratios) {
     maxSets = std::max(1u, maxSets);
     std::vector<VkDescriptorPoolSize> sizes;
@@ -60,6 +302,11 @@ VkDescriptorSet DescriptorAllocator::allocate(VkDevice device, VkDescriptorSetLa
     return ds;
 }
 
+VulkanEngine::VulkanEngine() = default;
+VulkanEngine::~VulkanEngine() = default;
+// ============================================================================
+// VulkanEngine :: Lifecycle
+// ============================================================================
 void VulkanEngine::init() {
     create_context(state_.width, state_.height, state_.name.c_str());
     create_swapchain(state_.width, state_.height);
@@ -67,38 +314,18 @@ void VulkanEngine::init() {
     create_command_buffers();
     create_renderer();
     create_imgui();
-    if (renderer_) renderer_->get_capabilities(renderer_caps_);
+
     if (renderer_) {
-        EngineContext eng{};
-        eng.instance              = ctx_.instance;
-        eng.physical              = ctx_.physical;
-        eng.device                = ctx_.device;
-        eng.allocator             = ctx_.allocator;
-        eng.descriptorAllocator   = &ctx_.descriptor_allocator;
-        eng.window                = ctx_.window;
-        eng.graphics_queue        = ctx_.graphics_queue;
-        eng.compute_queue         = ctx_.compute_queue;
-        eng.transfer_queue        = ctx_.transfer_queue;
-        eng.present_queue         = ctx_.present_queue;
-        eng.graphics_queue_family = ctx_.graphics_queue_family;
-        eng.compute_queue_family  = ctx_.compute_queue_family;
-        eng.transfer_queue_family = ctx_.transfer_queue_family;
-        eng.present_queue_family  = ctx_.present_queue_family;
-        FrameContext frm{};
-        frm.frame_index          = state_.frame_number;
-        frm.image_index          = 0;
-        frm.extent               = swapchain_.swapchain_extent;
-        frm.swapchain_format     = swapchain_.swapchain_image_format;
+        renderer_->get_capabilities(renderer_caps_);
+        EngineContext eng = make_engine_context();
+        FrameContext frm  = make_frame_context(state_.frame_number, 0u, swapchain_.swapchain_extent);
         frm.dt_sec               = 0.0;
         frm.time_sec             = 0.0;
         frm.swapchain_image      = VK_NULL_HANDLE;
         frm.swapchain_image_view = VK_NULL_HANDLE;
-        frm.offscreen_image      = swapchain_.drawable_image.image;
-        frm.offscreen_image_view = swapchain_.drawable_image.imageView;
-        frm.depth_image          = swapchain_.depth_image.image;
-        frm.depth_image_view     = swapchain_.depth_image.imageView;
         renderer_->on_swapchain_ready(eng, frm);
     }
+
     state_.initialized      = true;
     state_.running          = true;
     state_.should_rendering = true;
@@ -109,37 +336,26 @@ void VulkanEngine::run() {
     auto t0     = clock::now();
     auto t_prev = t0;
     SDL_Event e{};
-    EngineContext eng{};
-    eng.instance              = ctx_.instance;
-    eng.physical              = ctx_.physical;
-    eng.device                = ctx_.device;
-    eng.allocator             = ctx_.allocator;
-    eng.descriptorAllocator   = &ctx_.descriptor_allocator;
-    eng.window                = ctx_.window;
-    eng.graphics_queue        = ctx_.graphics_queue;
-    eng.compute_queue         = ctx_.compute_queue;
-    eng.transfer_queue        = ctx_.transfer_queue;
-    eng.present_queue         = ctx_.present_queue;
-    eng.graphics_queue_family = ctx_.graphics_queue_family;
-    eng.compute_queue_family  = ctx_.compute_queue_family;
-    eng.transfer_queue_family = ctx_.transfer_queue_family;
-    eng.present_queue_family  = ctx_.present_queue_family;
 
-    FrameContext last_frm{};
-    last_frm.extent               = swapchain_.swapchain_extent;
-    last_frm.swapchain_format     = swapchain_.swapchain_image_format;
-    last_frm.offscreen_image      = swapchain_.drawable_image.image;
-    last_frm.offscreen_image_view = swapchain_.drawable_image.imageView;
-    last_frm.depth_image          = swapchain_.depth_image.image;
-    last_frm.depth_image_view     = swapchain_.depth_image.imageView;
+    EngineContext eng = make_engine_context();
+    FrameContext last_frm = make_frame_context(state_.frame_number, 0u, swapchain_.swapchain_extent);
+    last_frm.swapchain_image      = VK_NULL_HANDLE;
+    last_frm.swapchain_image_view = VK_NULL_HANDLE;
 
     while (state_.running) {
         while (SDL_PollEvent(&e)) {
-            if (renderer_) renderer_->on_event(e, eng, state_.initialized ? &last_frm : nullptr);
-            if (ui_) ui_->process_event(&e);
+            if (renderer_) {
+                renderer_->on_event(e, eng, state_.initialized ? &last_frm : nullptr);
+            }
+            if (ui_) {
+                ui_->process_event(&e);
+            }
+
             switch (e.type) {
             case SDL_EVENT_QUIT:
-            case SDL_EVENT_WINDOW_CLOSE_REQUESTED: state_.running = false; break;
+            case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+                state_.running = false;
+                break;
             case SDL_EVENT_WINDOW_MINIMIZED:
                 state_.minimized        = true;
                 state_.should_rendering = false;
@@ -149,14 +365,22 @@ void VulkanEngine::run() {
                 state_.minimized        = false;
                 state_.should_rendering = true;
                 break;
-            case SDL_EVENT_WINDOW_FOCUS_GAINED: state_.focused = true; break;
-            case SDL_EVENT_WINDOW_FOCUS_LOST: state_.focused = false; break;
+            case SDL_EVENT_WINDOW_FOCUS_GAINED:
+                state_.focused = true;
+                break;
+            case SDL_EVENT_WINDOW_FOCUS_LOST:
+                state_.focused = false;
+                break;
             case SDL_EVENT_WINDOW_RESIZED:
-            case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: state_.resize_requested = true; break;
-            default: break;
+            case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+                state_.resize_requested = true;
+                break;
+            default:
+                break;
             }
         }
-        auto t_now      = clock::now();
+
+        auto t_now = clock::now();
         state_.dt_sec   = std::chrono::duration<double>(t_now - t_prev).count();
         state_.time_sec = std::chrono::duration<double>(t_now - t0).count();
         t_prev          = t_now;
@@ -165,14 +389,13 @@ void VulkanEngine::run() {
             SDL_WaitEventTimeout(nullptr, 100);
             continue;
         }
+
         if (state_.resize_requested) {
             recreate_swapchain();
-            last_frm.extent               = swapchain_.swapchain_extent;
-            last_frm.swapchain_format     = swapchain_.swapchain_image_format;
-            last_frm.offscreen_image      = swapchain_.drawable_image.image;
-            last_frm.offscreen_image_view = swapchain_.drawable_image.imageView;
-            last_frm.depth_image          = swapchain_.depth_image.image;
-            last_frm.depth_image_view     = swapchain_.depth_image.imageView;
+            eng = make_engine_context();
+            last_frm = make_frame_context(state_.frame_number, 0u, swapchain_.swapchain_extent);
+            last_frm.swapchain_image      = VK_NULL_HANDLE;
+            last_frm.swapchain_image_view = VK_NULL_HANDLE;
             continue;
         }
 
@@ -180,32 +403,36 @@ void VulkanEngine::run() {
         VkCommandBuffer cmd = VK_NULL_HANDLE;
         begin_frame(imageIndex, cmd);
         if (cmd == VK_NULL_HANDLE) {
-            if (state_.resize_requested) recreate_swapchain();
+            if (state_.resize_requested) {
+                recreate_swapchain();
+                eng = make_engine_context();
+                last_frm = make_frame_context(state_.frame_number, 0u, swapchain_.swapchain_extent);
+                last_frm.swapchain_image      = VK_NULL_HANDLE;
+                last_frm.swapchain_image_view = VK_NULL_HANDLE;
+            }
             continue;
         }
 
-        FrameContext frm{};
-        frm.frame_index          = state_.frame_number;
-        frm.image_index          = imageIndex;
-        frm.extent               = swapchain_.swapchain_extent;
-        frm.swapchain_format     = swapchain_.swapchain_image_format;
-        frm.dt_sec               = state_.dt_sec;
-        frm.time_sec             = state_.time_sec;
-        frm.swapchain_image      = swapchain_.swapchain_images[imageIndex];
-        frm.swapchain_image_view = swapchain_.swapchain_image_views[imageIndex];
-        frm.offscreen_image      = swapchain_.drawable_image.image;
-        frm.offscreen_image_view = swapchain_.drawable_image.imageView;
-        frm.depth_image          = swapchain_.depth_image.image;
-        frm.depth_image_view     = swapchain_.depth_image.imageView;
-        last_frm                 = frm;
+        FrameContext frm = make_frame_context(state_.frame_number, imageIndex, swapchain_.swapchain_extent);
+        last_frm         = frm;
 
-        if (renderer_) renderer_->update(eng, frm);
-        if (renderer_) renderer_->record_graphics(cmd, eng, frm);
+        if (renderer_) {
+            renderer_->update(eng, frm);
+            renderer_->record_graphics(cmd, eng, frm);
+        }
+
+        blit_offscreen_to_swapchain(cmd, imageIndex, frm.extent);
 
         if (ui_) {
             ui_->new_frame();
-            if (renderer_) renderer_->on_imgui(eng, frm);
-            ui_->render_overlay(cmd, frm.swapchain_image, frm.swapchain_image_view, frm.extent, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            if (renderer_) {
+                renderer_->on_imgui(eng, frm);
+            }
+            ui_->render_overlay(cmd,
+                                frm.swapchain_image,
+                                frm.swapchain_image_view,
+                                frm.extent,
+                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         }
 
         end_frame(imageIndex, cmd);
@@ -213,28 +440,23 @@ void VulkanEngine::run() {
     }
 }
 
+// ============================================================================
+// VulkanEngine :: Lifecycle
+// ============================================================================
 void VulkanEngine::cleanup() {
-    if (ctx_.device) vkDeviceWaitIdle(ctx_.device);
-    if (renderer_) {
-        EngineContext eng{};
-        eng.instance              = ctx_.instance;
-        eng.physical              = ctx_.physical;
-        eng.device                = ctx_.device;
-        eng.allocator             = ctx_.allocator;
-        eng.descriptorAllocator   = &ctx_.descriptor_allocator;
-        eng.window                = ctx_.window;
-        eng.graphics_queue        = ctx_.graphics_queue;
-        eng.compute_queue         = ctx_.compute_queue;
-        eng.transfer_queue        = ctx_.transfer_queue;
-        eng.present_queue         = ctx_.present_queue;
-        eng.graphics_queue_family = ctx_.graphics_queue_family;
-        eng.compute_queue_family  = ctx_.compute_queue_family;
-        eng.transfer_queue_family = ctx_.transfer_queue_family;
-        eng.present_queue_family  = ctx_.present_queue_family;
-        renderer_->on_swapchain_destroy(eng);
+    if (ctx_.device) {
+        vkDeviceWaitIdle(ctx_.device);
+        destroy_imgui();
     }
+
+    if (renderer_) {
+        renderer_->on_swapchain_destroy(make_engine_context());
+    }
+
     destroy_command_buffers();
-    for (auto& f : std::ranges::reverse_view(mdq_)) f();
+    for (auto& f : std::ranges::reverse_view(mdq_)) {
+        f();
+    }
     mdq_.clear();
     destroy_context();
 }
@@ -300,6 +522,97 @@ void VulkanEngine::destroy_context() {
     IF_NOT_NULL_DO_AND_SET(ctx_.instance, vkDestroyInstance(ctx_.instance, nullptr), nullptr);
     SDL_Quit();
 }
+EngineContext VulkanEngine::make_engine_context() const {
+    EngineContext eng{};
+    eng.instance = ctx_.instance;
+    eng.physical = ctx_.physical;
+    eng.device = ctx_.device;
+    eng.allocator = ctx_.allocator;
+    eng.descriptorAllocator = const_cast<DescriptorAllocator*>(&ctx_.descriptor_allocator);
+    eng.window = ctx_.window;
+    eng.graphics_queue = ctx_.graphics_queue;
+    eng.compute_queue = ctx_.compute_queue;
+    eng.transfer_queue = ctx_.transfer_queue;
+    eng.present_queue = ctx_.present_queue;
+    eng.graphics_queue_family = ctx_.graphics_queue_family;
+    eng.compute_queue_family = ctx_.compute_queue_family;
+    eng.transfer_queue_family = ctx_.transfer_queue_family;
+    eng.present_queue_family = ctx_.present_queue_family;
+    return eng;
+}
+
+FrameContext VulkanEngine::make_frame_context(uint64_t frame_index, uint32_t image_index, VkExtent2D extent) const {
+    FrameContext frm{};
+    frm.frame_index = frame_index;
+    frm.image_index = image_index;
+    frm.extent = extent;
+    frm.swapchain_format = swapchain_.swapchain_image_format;
+    frm.dt_sec = state_.dt_sec;
+    frm.time_sec = state_.time_sec;
+    if (image_index < swapchain_.swapchain_images.size()) {
+        frm.swapchain_image = swapchain_.swapchain_images[image_index];
+        frm.swapchain_image_view = swapchain_.swapchain_image_views[image_index];
+    }
+    frm.offscreen_image = swapchain_.drawable_image.image;
+    frm.offscreen_image_view = swapchain_.drawable_image.imageView;
+    frm.depth_image = swapchain_.depth_image.image;
+    frm.depth_image_view = swapchain_.depth_image.imageView;
+    return frm;
+}
+
+void VulkanEngine::blit_offscreen_to_swapchain(VkCommandBuffer cmd, uint32_t imageIndex, VkExtent2D extent) {
+    VkImage src = swapchain_.drawable_image.image;
+    if (src == VK_NULL_HANDLE) return;
+    if (imageIndex >= swapchain_.swapchain_images.size()) return;
+    VkImage dst = swapchain_.swapchain_images[imageIndex];
+
+    VkImageMemoryBarrier2 barriers[2]{};
+    barriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    barriers[0].srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    barriers[0].srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+    barriers[0].dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+    barriers[0].dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+    barriers[0].oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barriers[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barriers[0].image = src;
+    barriers[0].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 1u, 0u, 1u};
+
+    barriers[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    barriers[1].srcStageMask = VK_PIPELINE_STAGE_2_NONE;
+    barriers[1].srcAccessMask = 0u;
+    barriers[1].dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+    barriers[1].dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    barriers[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barriers[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barriers[1].image = dst;
+    barriers[1].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 1u, 0u, 1u};
+
+    VkDependencyInfo dep{};
+    dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dep.imageMemoryBarrierCount = 2u;
+    dep.pImageMemoryBarriers = barriers;
+    vkCmdPipelineBarrier2(cmd, &dep);
+
+    VkImageBlit2 blit{};
+    blit.sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2;
+    blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 0u, 1u};
+    blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 0u, 1u};
+    blit.srcOffsets[0] = {0, 0, 0};
+    blit.srcOffsets[1] = {static_cast<int32_t>(swapchain_.drawable_image.imageExtent.width), static_cast<int32_t>(swapchain_.drawable_image.imageExtent.height), 1};
+    blit.dstOffsets[0] = {0, 0, 0};
+    blit.dstOffsets[1] = {static_cast<int32_t>(extent.width), static_cast<int32_t>(extent.height), 1};
+
+    VkBlitImageInfo2 bi{};
+    bi.sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2;
+    bi.srcImage = src;
+    bi.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    bi.dstImage = dst;
+    bi.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    bi.regionCount = 1u;
+    bi.pRegions = &blit;
+    bi.filter = VK_FILTER_LINEAR;
+    vkCmdBlitImage2(cmd, &bi);
+}
 
 void VulkanEngine::create_swapchain(uint32_t width, uint32_t height) {
     swapchain_.swapchain_image_format = VK_FORMAT_B8G8R8A8_UNORM;
@@ -326,66 +639,30 @@ void VulkanEngine::destroy_swapchain() {
 
 void VulkanEngine::recreate_swapchain() {
     if (!ctx_.device) return;
+
     if (renderer_) {
-        EngineContext eng{};
-        eng.instance              = ctx_.instance;
-        eng.physical              = ctx_.physical;
-        eng.device                = ctx_.device;
-        eng.allocator             = ctx_.allocator;
-        eng.descriptorAllocator   = &ctx_.descriptor_allocator;
-        eng.window                = ctx_.window;
-        eng.graphics_queue        = ctx_.graphics_queue;
-        eng.compute_queue         = ctx_.compute_queue;
-        eng.transfer_queue        = ctx_.transfer_queue;
-        eng.present_queue         = ctx_.present_queue;
-        eng.graphics_queue_family = ctx_.graphics_queue_family;
-        eng.compute_queue_family  = ctx_.compute_queue_family;
-        eng.transfer_queue_family = ctx_.transfer_queue_family;
-        eng.present_queue_family  = ctx_.present_queue_family;
-        renderer_->on_swapchain_destroy(eng);
+        renderer_->on_swapchain_destroy(make_engine_context());
     }
+
     vkDeviceWaitIdle(ctx_.device);
     destroy_swapchain();
     destroy_offscreen_drawable();
-    int pxw = 0, pxh = 0;
+
+    int pxw = 0;
+    int pxh = 0;
     SDL_GetWindowSizeInPixels(ctx_.window, &pxw, &pxh);
     pxw = std::max(1, pxw);
     pxh = std::max(1, pxh);
     create_swapchain(static_cast<uint32_t>(pxw), static_cast<uint32_t>(pxh));
     create_offscreen_drawable(static_cast<uint32_t>(pxw), static_cast<uint32_t>(pxh));
 
-    EngineContext eng{};
-    eng.instance              = ctx_.instance;
-    eng.physical              = ctx_.physical;
-    eng.device                = ctx_.device;
-    eng.allocator             = ctx_.allocator;
-    eng.descriptorAllocator   = &ctx_.descriptor_allocator;
-    eng.window                = ctx_.window;
-    eng.graphics_queue        = ctx_.graphics_queue;
-    eng.compute_queue         = ctx_.compute_queue;
-    eng.transfer_queue        = ctx_.transfer_queue;
-    eng.present_queue         = ctx_.present_queue;
-    eng.graphics_queue_family = ctx_.graphics_queue_family;
-    eng.compute_queue_family  = ctx_.compute_queue_family;
-    eng.transfer_queue_family = ctx_.transfer_queue_family;
-    eng.present_queue_family  = ctx_.present_queue_family;
-
-    FrameContext frm{};
-    frm.frame_index          = state_.frame_number;
-    frm.image_index          = 0;
-    frm.extent               = swapchain_.swapchain_extent;
-    frm.swapchain_format     = swapchain_.swapchain_image_format;
-    frm.dt_sec               = state_.dt_sec;
-    frm.time_sec             = state_.time_sec;
+    FrameContext frm = make_frame_context(state_.frame_number, 0u, swapchain_.swapchain_extent);
     frm.swapchain_image      = VK_NULL_HANDLE;
     frm.swapchain_image_view = VK_NULL_HANDLE;
-    frm.offscreen_image      = swapchain_.drawable_image.image;
-    frm.offscreen_image_view = swapchain_.drawable_image.imageView;
-    frm.depth_image          = swapchain_.depth_image.image;
-    frm.depth_image_view     = swapchain_.depth_image.imageView;
 
-    IF_NOT_NULL_DO(renderer_, renderer_->on_swapchain_ready(eng, frm));
+    IF_NOT_NULL_DO(renderer_, renderer_->on_swapchain_ready(make_engine_context(), frm));
     IF_NOT_NULL_DO(ui_, ui_->set_min_image_count(static_cast<uint32_t>(swapchain_.swapchain_images.size())));
+
     state_.resize_requested = false;
 }
 
@@ -578,8 +855,11 @@ void VulkanEngine::destroy_renderer() {
         nullptr);
 }
 
+// ============================================================================
+// VulkanEngine :: ImGui Integration
+// ============================================================================
 void VulkanEngine::create_imgui() {
-    ui_ = std::make_unique<ImGuiLayer>();
+    ui_ = std::make_unique<UiSystem>();
     try {
         if (!ui_->init(ctx_.window,
                        ctx_.instance,
@@ -589,18 +869,15 @@ void VulkanEngine::create_imgui() {
                        ctx_.graphics_queue_family,
                        swapchain_.swapchain_image_format,
                        static_cast<uint32_t>(swapchain_.swapchain_images.size()))) {
-            throw std::runtime_error("ImGuiLayer init failed");
+            throw std::runtime_error("ImGui initialization failed");
         }
     } catch (const std::exception& ex) {
         if (ui_) {
             ui_->shutdown(ctx_.device);
             ui_.reset();
         }
-        throw std::runtime_error(std::string("ImGuiLayer init failed: ") + ex.what());
+        throw std::runtime_error(std::string("ImGui initialization failed: ") + ex.what());
     }
-
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowRounding   = 0.0f;
@@ -619,11 +896,7 @@ void VulkanEngine::create_imgui() {
             | ImGuiDockNodeFlags_AutoHideTabBar;
 
         static ImGuiID dockspace_id = 0;
-        dockspace_id = ImGui::DockSpaceOverViewport(
-            dockspace_id,
-            nullptr,
-            flags,
-            nullptr);
+        dockspace_id = ImGui::DockSpaceOverViewport(dockspace_id, nullptr, flags, nullptr);
     });
 
     ui_->add_panel([this, props, memProps] {
@@ -664,7 +937,7 @@ void VulkanEngine::create_imgui() {
             ImGui::Text("Depth:   0x%08X", static_cast<uint32_t>(swapchain_.depth_image.imageFormat));
 
             ImGui::SeparatorText("Window");
-            int lw=0, lh=0, pw=0, ph=0;
+            int lw = 0, lh = 0, pw = 0, ph = 0;
             SDL_GetWindowSize(ctx_.window, &lw, &lh);
             SDL_GetWindowSizeInPixels(ctx_.window, &pw, &ph);
             ImGui::Text("Logical: %d x %d", lw, lh);
@@ -699,12 +972,12 @@ void VulkanEngine::create_imgui() {
 
                 ImGui::SeparatorText("Caps");
                 ImGui::Text("FramesInFlight: %u", renderer_caps_.frames_in_flight);
-                ImGui::Text("DynamicRendering: %s", renderer_caps_.dynamic_rendering ? "Yes":"No");
-                ImGui::Text("TimelineSemaphore: %s", renderer_caps_.timeline_semaphore ? "Yes":"No");
-                ImGui::Text("DescriptorIndexing: %s", renderer_caps_.descriptor_indexing ? "Yes":"No");
-                ImGui::Text("BufferDeviceAddress: %s", renderer_caps_.buffer_device_address ? "Yes":"No");
-                ImGui::Text("UsesDepth: %s", renderer_caps_.uses_depth ? "Yes":"No");
-                ImGui::Text("UsesOffscreen: %s", renderer_caps_.uses_offscreen ? "Yes":"No");
+                ImGui::Text("DynamicRendering: %s", renderer_caps_.dynamic_rendering ? "Yes" : "No");
+                ImGui::Text("TimelineSemaphore: %s", renderer_caps_.timeline_semaphore ? "Yes" : "No");
+                ImGui::Text("DescriptorIndexing: %s", renderer_caps_.descriptor_indexing ? "Yes" : "No");
+                ImGui::Text("BufferDeviceAddress: %s", renderer_caps_.buffer_device_address ? "Yes" : "No");
+                ImGui::Text("UsesDepth: %s", renderer_caps_.uses_depth ? "Yes" : "No");
+                ImGui::Text("UsesOffscreen: %s", renderer_caps_.uses_offscreen ? "Yes" : "No");
             } else {
                 ImGui::TextUnformatted("(no renderer)");
             }
@@ -713,22 +986,19 @@ void VulkanEngine::create_imgui() {
             ImGui::Text("Timeline value: %llu", static_cast<unsigned long long>(timeline_value_));
 
             ImGui::SeparatorText("Memory (VMA)");
-            {
-                std::vector<VmaBudget> budgets(memProps.memoryHeapCount);
-                vmaGetHeapBudgets(ctx_.allocator, budgets.data());
-                uint64_t totalBudget = 0, totalUsage = 0;
-                for (uint32_t i = 0; i < memProps.memoryHeapCount; ++i) {
-                    totalBudget += budgets[i].budget;
-                    totalUsage  += budgets[i].usage;
-                }
-                auto fmtMB = [](uint64_t b) { return double(b) / (1024.0*1024.0); };
-                ImGui::Text("Usage:  %.1f MB / %.1f MB", fmtMB(totalUsage), fmtMB(totalBudget));
+            std::vector<VmaBudget> budgets(memProps.memoryHeapCount);
+            vmaGetHeapBudgets(ctx_.allocator, budgets.data());
+            uint64_t totalBudget = 0, totalUsage = 0;
+            for (uint32_t i = 0; i < memProps.memoryHeapCount; ++i) {
+                totalBudget += budgets[i].budget;
+                totalUsage  += budgets[i].usage;
             }
+            auto fmtMB = [](uint64_t bytes) { return double(bytes) / (1024.0 * 1024.0); };
+            ImGui::Text("Usage:  %.1f MB / %.1f MB", fmtMB(totalUsage), fmtMB(totalBudget));
         }
         ImGui::End();
     });
 }
-
 void VulkanEngine::destroy_imgui() {
     if (ui_) {
         ui_->shutdown(ctx_.device);

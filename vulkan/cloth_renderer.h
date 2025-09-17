@@ -1,7 +1,6 @@
 #ifndef HINACLOTH_CLOTH_RENDERER_H
 #define HINACLOTH_CLOTH_RENDERER_H
 
-#include "renderer_iface.h"
 #include "vk_engine.h"
 
 #include "cloth_data.h"

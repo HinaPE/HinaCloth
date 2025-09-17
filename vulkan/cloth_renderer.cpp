@@ -1,6 +1,5 @@
 #include "cloth_renderer.h"
 
-#include "renderer_iface.h"
 #include "vk_engine.h"
 
 #include "aligned_allocator.h"

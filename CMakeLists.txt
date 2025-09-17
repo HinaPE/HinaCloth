@@ -109,9 +109,6 @@ if (HINACLOTH_BUILD_VULKAN_VISUALIZER)
             main.cpp
             vulkan/vk_engine.cpp
             vulkan/vk_engine.h
-            vulkan/imgui_layer.cpp
-            vulkan/imgui_layer.h
-            vulkan/renderer_iface.h
             vulkan/cloth_renderer.cpp
             vulkan/cloth_renderer.h
             vulkan/shaders/cloth_vert_spv.inc
