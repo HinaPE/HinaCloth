@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.26)
 project(HinaCloth LANGUAGES CXX)
 
+option(HINACLOTH_BUILD_VULKAN_VISUALIZER "Build the Vulkan visualizer application" OFF)
+
 # ==== Global configuration ===================================================
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -87,24 +89,26 @@ add_test(NAME xpbd_benchmark COMMAND test_xpbd)
 
 
 # ==== Vulkan Visualizer ==============================================================
-include(cmake/setup_imgui.cmake)
-include(cmake/setup_sdl3.cmake)
-include(cmake/setup_vkbootstrap.cmake)
-include(cmake/setup_vma.cmake)
-find_package(Vulkan REQUIRED)
-set(VulkanAppName "visualizer")
-add_executable(${VulkanAppName}
-        main.cpp
-        vulkan/vk_engine.cpp
-        vulkan/vk_engine.h
-        vulkan/imgui_layer.cpp
-        vulkan/imgui_layer.h
-        vulkan/renderer_iface.h
-)
-target_link_libraries(${VulkanAppName} PRIVATE Vulkan::Vulkan)
-use_imgui(${VulkanAppName})
-use_sdl3(${VulkanAppName})
-use_vkbootstrap(${VulkanAppName})
-use_vma(${VulkanAppName})
-imgui_enable_backends(${VulkanAppName} BACKENDS sdl3 vulkan)
-target_compile_features(${VulkanAppName} PRIVATE cxx_std_23)
+if (HINACLOTH_BUILD_VULKAN_VISUALIZER)
+    include(cmake/setup_imgui.cmake)
+    include(cmake/setup_sdl3.cmake)
+    include(cmake/setup_vkbootstrap.cmake)
+    include(cmake/setup_vma.cmake)
+    find_package(Vulkan REQUIRED)
+    set(VulkanAppName "visualizer")
+    add_executable(${VulkanAppName}
+            main.cpp
+            vulkan/vk_engine.cpp
+            vulkan/vk_engine.h
+            vulkan/imgui_layer.cpp
+            vulkan/imgui_layer.h
+            vulkan/renderer_iface.h
+    )
+    target_link_libraries(${VulkanAppName} PRIVATE Vulkan::Vulkan)
+    use_imgui(${VulkanAppName})
+    use_sdl3(${VulkanAppName})
+    use_vkbootstrap(${VulkanAppName})
+    use_vma(${VulkanAppName})
+    imgui_enable_backends(${VulkanAppName} BACKENDS sdl3 vulkan)
+    target_compile_features(${VulkanAppName} PRIVATE cxx_std_23)
+endif()
