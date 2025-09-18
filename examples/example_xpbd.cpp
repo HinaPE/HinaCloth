@@ -8,6 +8,7 @@
 #include <cmath>
 #include <memory>
 #include <algorithm>
+#include <imgui.h>
 
 #ifndef VK_CHECK
 #define VK_CHECK(x) do { VkResult _res = (x); if (_res != VK_SUCCESS) { throw std::runtime_error(std::string("Vulkan error ")+ std::to_string(_res) + " at " #x); } } while(false)
@@ -138,42 +139,64 @@ public:
         }
     }
 
+    void on_imgui(const EngineContext&, const FrameContext&) override {
+        ImGui::Begin("XPBD Controls");
+        const char* layouts[] = {"AoS","SoA","AoSoA","Aligned"};
+        const char* backends[] = {"Native","TBB","AVX2"};
+        ImGui::Combo("Layout (1/2/3/4)", &mode_, layouts, IM_ARRAYSIZE(layouts));
+        ImGui::Combo("Backend (Q/W/E)", &backend_, backends, IM_ARRAYSIZE(backends));
+        if (ImGui::Button("Reset")) resetCloth();
+        ImGui::SameLine(); ImGui::Checkbox("Simulate", &simulate_);
+        ImGui::SameLine(); if (ImGui::Button("Step")) { bool was = simulate_; simulate_ = true; on_step_once_ = true; (void)was; }
+        ImGui::SliderFloat("Speed", &sim_speed_, 0.f, 4.f, "%.2fx");
+        ImGui::SeparatorText("Params");
+        ImGui::SliderInt("Iterations", &ui_params_.iterations, 1, 80);
+        ImGui::SliderInt("Substeps", &ui_params_.substeps, 1, 8);
+        ImGui::SliderFloat("dt min", &ui_params_.min_dt, 1e-4f, 5e-3f, "%.5f");
+        ImGui::SliderFloat("dt max", &ui_params_.max_dt, 5e-3f, 5e-2f, "%.4f");
+        ImGui::SliderFloat3("Gravity", &ui_params_.ax, -50.f, 50.f, "%.2f");
+        ImGui::SliderFloat("Vel Damping", &ui_params_.velocity_damping, 0.f, 0.2f, "%.3f");
+        ImGui::Checkbox("Warmstart", (bool*)&ui_params_.warmstart);
+        ImGui::SliderFloat("Lambda Decay", &ui_params_.lambda_decay, 0.f, 1.f, "%.3f");
+        ImGui::SeparatorText("Compliance Scale");
+        ImGui::SliderFloat("All", &ui_params_.compliance_scale_all, 0.f, 10.f, "%.3f");
+        ImGui::SliderFloat("Structural", &ui_params_.compliance_scale_structural, 0.f, 10.f, "%.3f");
+        ImGui::SliderFloat("Shear", &ui_params_.compliance_scale_shear, 0.f, 10.f, "%.3f");
+        ImGui::SliderFloat("Bending", &ui_params_.compliance_scale_bending, 0.f, 10.f, "%.3f");
+        ImGui::SliderFloat("Max Correction", &ui_params_.max_correction, 0.f, 0.05f, "%.4f");
+        ImGui::SeparatorText("Residuals");
+        auto r = computeResidual();
+        ImGui::Text("L1=%.4g  L2=%.4g  Linf=%.4g", r.l1, r.l2, r.linf);
+        ImGui::Text("pts=%zu  cons=%zu", r.npts, r.ncons);
+        ImGui::End();
+
+        if (on_step_once_) { simulate_ = false; on_step_once_ = false; }
+    }
+
     void update(const EngineContext&, const FrameContext& frm) override {
-        const float dt = (float)frm.dt_sec;
-        HinaPE::XPBDParams params;
-        params.ax = 0.0f; params.ay = -9.81f; params.az = 0.0f;
-        params.iterations = 10;
-        params.substeps = 1;
-        params.min_dt = 1.0f/400.0f;
-        params.max_dt = 1.0f/30.0f;
-        params.velocity_damping = 0.01f;
-        params.warmstart = false;
-        params.lambda_decay = 1.0f;
-        params.compliance_scale_all = 1.0f;
-        params.compliance_scale_structural = 1.0f;
-        params.compliance_scale_shear = 1.0f;
-        params.compliance_scale_bending = 1.0f;
-        params.max_correction = 0.0f;
-        params.write_debug_fields = 0;
-        auto use_native = backend_ == 0;
-        auto use_tbb    = backend_ == 1;
-        auto use_avx2   = backend_ == 2;
-        if (mode_ == 0) {
-            if (use_tbb) HinaPE::xpbd_step_tbb_aos(cloth_aos_, dt, params);
-            else if (use_avx2) HinaPE::xpbd_step_avx2_aos(cloth_aos_, dt, params);
-            else HinaPE::xpbd_step_native_aos(cloth_aos_, dt, params);
-        } else if (mode_ == 1) {
-            if (use_tbb) HinaPE::xpbd_step_tbb_soa(cloth_soa_, dt, params);
-            else if (use_avx2) HinaPE::xpbd_step_avx2_soa(cloth_soa_, dt, params);
-            else HinaPE::xpbd_step_native_soa(cloth_soa_, dt, params);
-        } else if (mode_ == 2) {
-            if (use_tbb) HinaPE::xpbd_step_tbb_aosoa(cloth_aosoa_, dt, params);
-            else if (use_avx2) HinaPE::xpbd_step_avx2_aosoa(cloth_aosoa_, dt, params);
-            else HinaPE::xpbd_step_native_aosoa(cloth_aosoa_, dt, params);
-        } else {
-            if (use_tbb) HinaPE::xpbd_step_tbb_aligned(cloth_aligned_, dt, params);
-            else if (use_avx2) HinaPE::xpbd_step_avx2_aligned(cloth_aligned_, dt, params);
-            else HinaPE::xpbd_step_native_aligned(cloth_aligned_, dt, params);
+        const float dt = (float)frm.dt_sec * sim_speed_;
+        if (simulate_) {
+            const auto& params = ui_params_;
+            auto use_native = backend_ == 0;
+            auto use_tbb    = backend_ == 1;
+            auto use_avx2   = backend_ == 2;
+            if (mode_ == 0) {
+                if (use_tbb) HinaPE::xpbd_step_tbb_aos(cloth_aos_, dt, params);
+                else if (use_avx2) HinaPE::xpbd_step_avx2_aos(cloth_aos_, dt, params);
+                else HinaPE::xpbd_step_native_aos(cloth_aos_, dt, params);
+            } else if (mode_ == 1) {
+                if (use_tbb) HinaPE::xpbd_step_tbb_soa(cloth_soa_, dt, params);
+                else if (use_avx2) HinaPE::xpbd_step_avx2_soa(cloth_soa_, dt, params);
+                else HinaPE::xpbd_step_native_soa(cloth_soa_, dt, params);
+            } else if (mode_ == 2) {
+                if (use_tbb) HinaPE::xpbd_step_tbb_aosoa(cloth_aosoa_, dt, params);
+                else if (use_avx2) HinaPE::xpbd_step_avx2_aosoa(cloth_aosoa_, dt, params);
+                else HinaPE::xpbd_step_native_aosoa(cloth_aosoa_, dt, params);
+            } else {
+                if (use_tbb) HinaPE::xpbd_step_tbb_aligned(cloth_aligned_, dt, params);
+                else if (use_avx2) HinaPE::xpbd_step_avx2_aligned(cloth_aligned_, dt, params);
+                else HinaPE::xpbd_step_native_aligned(cloth_aligned_, dt, params);
+            }
         }
         buildGeometry();
         uploadGeometry();
@@ -463,6 +486,10 @@ private:
 
     float viewportW_{1280.f};
     float viewportH_{720.f};
+    bool simulate_{true};
+    bool on_step_once_{false};
+    float sim_speed_{1.0f};
+    HinaPE::XPBDParams ui_params_{[](){ HinaPE::XPBDParams p{}; p.ax=0; p.ay=-9.81f; p.az=0; p.iterations=10; p.substeps=1; p.min_dt=1.f/400.f; p.max_dt=1.f/30.f; p.velocity_damping=0.01f; p.warmstart=false; p.lambda_decay=1.f; p.compliance_scale_all=1.f; p.compliance_scale_structural=1.f; p.compliance_scale_shear=1.f; p.compliance_scale_bending=1.f; p.max_correction=0.f; p.write_debug_fields=0; return p; }()};
 
     int mode_{0};    // 0: AoS, 1: SoA, 2: AoSoA, 3: Aligned SoA
     int backend_{0}; // 0: Native, 1: TBB, 2: AVX2
@@ -479,6 +506,18 @@ private:
     uint32_t triVertCount_{0};
 
     int clothNx_{0}, clothNy_{0};
+
+    struct ResidOut { double l1{}, l2{}, linf{}; size_t npts{}, ncons{}; };
+    ResidOut computeResidual() const {
+        auto compute_aos = [&](const HinaPE::ClothAOS& c){ double s1=0,s2=0,sm=0; for (const auto& con: c.constraints){ const auto&a=c.particles[con.i]; const auto&b=c.particles[con.j]; double dx=a.x-b.x,dy=a.y-b.y,dz=a.z-b.z; double r=std::sqrt(dx*dx+dy*dy+dz*dz)-con.rest_length; double v=std::abs(r); s1+=v; s2+=r*r; sm=std::max(sm,v);} return ResidOut{ s1/std::max<size_t>(1,c.constraints.size()), std::sqrt(s2/std::max<size_t>(1,c.constraints.size())), sm, c.particles.size(), c.constraints.size() }; };
+        auto compute_soa = [&](const HinaPE::ClothSOA& c){ double s1=0,s2=0,sm=0; for (size_t k=0;k<c.ci.size();++k){ int i=c.ci[k], j=c.cj[k]; double dx=c.x[i]-c.x[j], dy=c.y[i]-c.y[j], dz=c.z[i]-c.z[j]; double r=std::sqrt(dx*dx+dy*dy+dz*dz)-c.rest_length[k]; double v=std::abs(r); s1+=v; s2+=r*r; sm=std::max(sm,v);} return ResidOut{ s1/std::max<size_t>(1,c.ci.size()), std::sqrt(s2/std::max<size_t>(1,c.ci.size())), sm, c.x.size(), c.ci.size() }; };
+        auto compute_aosoa = [&](const HinaPE::ClothAoSoA& c){ double s1=0,s2=0,sm=0; size_t m=c.cons_count; for (int cb=0; cb<(m+HinaPE::AOSOA_BLOCK-1)/HinaPE::AOSOA_BLOCK; ++cb){ const auto& blk=c.cblocks[cb]; for (int l=0;l<HinaPE::AOSOA_BLOCK;++l){ size_t k=cb*HinaPE::AOSOA_BLOCK + l; if (k>=m) break; int ia=blk.i[l], ib=blk.j[l]; int bai=ia/HinaPE::AOSOA_BLOCK,lai=ia%HinaPE::AOSOA_BLOCK; int bbi=ib/HinaPE::AOSOA_BLOCK,lbi=ib%HinaPE::AOSOA_BLOCK; const auto& pa=c.pblocks[bai]; const auto& pb=c.pblocks[bbi]; double dx=pa.x[lai]-pb.x[lbi],dy=pa.y[lai]-pb.y[lbi],dz=pa.z[lai]-pb.z[lbi]; double r=std::sqrt(dx*dx+dy*dy+dz*dz)-blk.rest_length[l]; double v=std::abs(r); s1+=v; s2+=r*r; sm=std::max(sm,v);} } return ResidOut{ s1/std::max<size_t>(1,m), std::sqrt(s2/std::max<size_t>(1,m)), sm, c.count, c.cons_count }; };
+        auto compute_aligned = [&](const HinaPE::ClothAligned& c){ double s1=0,s2=0,sm=0; size_t m=c.ci.size; for (size_t k=0;k<m;++k){ int i=c.ci[k], j=c.cj[k]; double dx=c.x[i]-c.x[j],dy=c.y[i]-c.y[j],dz=c.z[i]-c.z[j]; double r=std::sqrt(dx*dx+dy*dy+dz*dz)-c.rest_length[k]; double v=std::abs(r); s1+=v; s2+=r*r; sm=std::max(sm,v);} return ResidOut{ s1/std::max<size_t>(1,m), std::sqrt(s2/std::max<size_t>(1,m)), sm, c.x.size, c.ci.size }; };
+        if (mode_==0) return compute_aos(cloth_aos_);
+        if (mode_==1) return compute_soa(cloth_soa_);
+        if (mode_==2) return compute_aosoa(cloth_aosoa_);
+        return compute_aligned(cloth_aligned_);
+    }
 };
 
 int main() {

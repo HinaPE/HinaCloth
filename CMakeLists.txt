@@ -27,6 +27,7 @@ add_library(xpbd_core ALIAS libhinacloth)
 # Optionally build Vulkan visualizer and examples
 # ----------------------------------------------------------------------------
 option(HINACLOTH_BUILD_VULKAN_VISUALIZER "Build Vulkan visualizer and examples" OFF)
+option(HINACLOTH_BUILD_TESTS "Build XPBD tests/benchmarks" ON)
 
 # Setup oneTBB via helper script
 include(cmake/setup_tbb.cmake)
@@ -106,4 +107,21 @@ if (HINACLOTH_BUILD_VULKAN_VISUALIZER)
             COMMAND_EXPAND_LISTS
         )
     endif ()
+endif ()
+
+# ----------------------------------------------------------------------------
+# Tests / Benchmarks
+# ----------------------------------------------------------------------------
+if (HINACLOTH_BUILD_TESTS)
+    add_executable(test_bench_xpbd test/test_bench_xpbd.cpp)
+    target_link_libraries(test_bench_xpbd PRIVATE libhinacloth)
+    use_tbb(test_bench_xpbd)
+
+    add_executable(test_validation_xpbd test/test_validation_xpbd.cpp)
+    target_link_libraries(test_validation_xpbd PRIVATE libhinacloth)
+    use_tbb(test_validation_xpbd)
+
+    enable_testing()
+    add_test(NAME validation_xpbd COMMAND test_validation_xpbd)
+    add_test(NAME bench_xpbd COMMAND test_bench_xpbd)
 endif ()
