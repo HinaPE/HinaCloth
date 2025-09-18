@@ -348,10 +348,26 @@ private:
     }
 
     void initCloth() {
-        HinaPE::build_cloth_grid_aos(cloth_aos_, 40, 25, 1.6f, 1.0f, +0.3f, true);
-        HinaPE::build_cloth_grid_soa(cloth_soa_, 40, 25, 1.6f, 1.0f, +0.3f, true);
-        HinaPE::build_cloth_grid_aosoa(cloth_aosoa_, 40, 25, 1.6f, 1.0f, +0.3f, true);
-        HinaPE::build_cloth_grid_aligned(cloth_aligned_, 40, 25, 1.6f, 1.0f, +0.3f, true);
+        clothNx_ = 40;
+        clothNy_ = 25;
+        rebuildClothState();
+    }
+
+    void resetCloth() {
+        rebuildClothState();
+        buildGeometry();
+        uploadGeometry();
+    }
+
+    void rebuildClothState() {
+        const float clothWidth = 1.6f;
+        const float clothHeight = 1.0f;
+        const float clothStartY = 0.3f;
+        const bool pinTopCorners = true;
+        HinaPE::build_cloth_grid_aos(cloth_aos_, clothNx_, clothNy_, clothWidth, clothHeight, clothStartY, pinTopCorners);
+        HinaPE::build_cloth_grid_soa(cloth_soa_, clothNx_, clothNy_, clothWidth, clothHeight, clothStartY, pinTopCorners);
+        HinaPE::build_cloth_grid_aosoa(cloth_aosoa_, clothNx_, clothNy_, clothWidth, clothHeight, clothStartY, pinTopCorners);
+        HinaPE::build_cloth_grid_aligned(cloth_aligned_, clothNx_, clothNy_, clothWidth, clothHeight, clothStartY, pinTopCorners);
     }
 
     void buildGeometry() {
@@ -443,14 +459,18 @@ private:
 
     void allocateBuffers() {
         // Initial conservative sizes across all layouts
-        size_t maxLines = std::max({ cloth_aos_.constraints.size()*2ull,
-                                     cloth_soa_.ci.size()*2ull,
-                                     (size_t)cloth_aosoa_.cons_count*2ull,
-                                     cloth_aligned_.ci.size*2ull }) + 1024;
-        size_t maxTris  = std::max({ cloth_aos_.particles.size()*6ull,
-                                     cloth_soa_.x.size()*6ull,
-                                     (size_t)cloth_aosoa_.count*6ull,
-                                     cloth_aligned_.x.size*6ull }) + 1024;
+        size_t maxConstraintCount = cloth_aos_.constraints.size();
+        maxConstraintCount = std::max(maxConstraintCount, cloth_soa_.ci.size());
+        maxConstraintCount = std::max(maxConstraintCount, static_cast<size_t>(cloth_aosoa_.cons_count));
+        maxConstraintCount = std::max(maxConstraintCount, cloth_aligned_.ci.size);
+
+        size_t maxParticleCount = cloth_aos_.particles.size();
+        maxParticleCount = std::max(maxParticleCount, cloth_soa_.x.size());
+        maxParticleCount = std::max(maxParticleCount, static_cast<size_t>(cloth_aosoa_.count));
+        maxParticleCount = std::max(maxParticleCount, cloth_aligned_.x.size);
+
+        size_t maxLines = maxConstraintCount * 2ull + 1024;
+        size_t maxTris  = maxParticleCount * 6ull + 1024;
         create_buffer(allocator_, maxLines * sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vboLines_);
         create_buffer(allocator_, maxTris  * sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vboTris_);
     }
@@ -511,7 +531,7 @@ private:
     ResidOut computeResidual() const {
         auto compute_aos = [&](const HinaPE::ClothAOS& c){ double s1=0,s2=0,sm=0; for (const auto& con: c.constraints){ const auto&a=c.particles[con.i]; const auto&b=c.particles[con.j]; double dx=a.x-b.x,dy=a.y-b.y,dz=a.z-b.z; double r=std::sqrt(dx*dx+dy*dy+dz*dz)-con.rest_length; double v=std::abs(r); s1+=v; s2+=r*r; sm=std::max(sm,v);} return ResidOut{ s1/std::max<size_t>(1,c.constraints.size()), std::sqrt(s2/std::max<size_t>(1,c.constraints.size())), sm, c.particles.size(), c.constraints.size() }; };
         auto compute_soa = [&](const HinaPE::ClothSOA& c){ double s1=0,s2=0,sm=0; for (size_t k=0;k<c.ci.size();++k){ int i=c.ci[k], j=c.cj[k]; double dx=c.x[i]-c.x[j], dy=c.y[i]-c.y[j], dz=c.z[i]-c.z[j]; double r=std::sqrt(dx*dx+dy*dy+dz*dz)-c.rest_length[k]; double v=std::abs(r); s1+=v; s2+=r*r; sm=std::max(sm,v);} return ResidOut{ s1/std::max<size_t>(1,c.ci.size()), std::sqrt(s2/std::max<size_t>(1,c.ci.size())), sm, c.x.size(), c.ci.size() }; };
-        auto compute_aosoa = [&](const HinaPE::ClothAoSoA& c){ double s1=0,s2=0,sm=0; size_t m=c.cons_count; for (int cb=0; cb<(m+HinaPE::AOSOA_BLOCK-1)/HinaPE::AOSOA_BLOCK; ++cb){ const auto& blk=c.cblocks[cb]; for (int l=0;l<HinaPE::AOSOA_BLOCK;++l){ size_t k=cb*HinaPE::AOSOA_BLOCK + l; if (k>=m) break; int ia=blk.i[l], ib=blk.j[l]; int bai=ia/HinaPE::AOSOA_BLOCK,lai=ia%HinaPE::AOSOA_BLOCK; int bbi=ib/HinaPE::AOSOA_BLOCK,lbi=ib%HinaPE::AOSOA_BLOCK; const auto& pa=c.pblocks[bai]; const auto& pb=c.pblocks[bbi]; double dx=pa.x[lai]-pb.x[lbi],dy=pa.y[lai]-pb.y[lbi],dz=pa.z[lai]-pb.z[lbi]; double r=std::sqrt(dx*dx+dy*dy+dz*dz)-blk.rest_length[l]; double v=std::abs(r); s1+=v; s2+=r*r; sm=std::max(sm,v);} } return ResidOut{ s1/std::max<size_t>(1,m), std::sqrt(s2/std::max<size_t>(1,m)), sm, c.count, c.cons_count }; };
+        auto compute_aosoa = [&](const HinaPE::ClothAoSoA& c){ double s1=0,s2=0,sm=0; size_t m=static_cast<size_t>(c.cons_count); for (int cb=0; cb<(m+HinaPE::AOSOA_BLOCK-1)/HinaPE::AOSOA_BLOCK; ++cb){ const auto& blk=c.cblocks[cb]; for (int l=0;l<HinaPE::AOSOA_BLOCK;++l){ size_t k=static_cast<size_t>(cb*HinaPE::AOSOA_BLOCK + l); if (k>=m) break; int ia=blk.i[l], ib=blk.j[l]; int bai=ia/HinaPE::AOSOA_BLOCK,lai=ia%HinaPE::AOSOA_BLOCK; int bbi=ib/HinaPE::AOSOA_BLOCK,lbi=ib%HinaPE::AOSOA_BLOCK; const auto& pa=c.pblocks[bai]; const auto& pb=c.pblocks[bbi]; double dx=pa.x[lai]-pb.x[lbi],dy=pa.y[lai]-pb.y[lbi],dz=pa.z[lai]-pb.z[lbi]; double r=std::sqrt(dx*dx+dy*dy+dz*dz)-blk.rest_length[l]; double v=std::abs(r); s1+=v; s2+=r*r; sm=std::max(sm,v);} } return ResidOut{ s1/std::max<size_t>(1,m), std::sqrt(s2/std::max<size_t>(1,m)), sm, static_cast<size_t>(c.count), static_cast<size_t>(c.cons_count) }; };
         auto compute_aligned = [&](const HinaPE::ClothAligned& c){ double s1=0,s2=0,sm=0; size_t m=c.ci.size; for (size_t k=0;k<m;++k){ int i=c.ci[k], j=c.cj[k]; double dx=c.x[i]-c.x[j],dy=c.y[i]-c.y[j],dz=c.z[i]-c.z[j]; double r=std::sqrt(dx*dx+dy*dy+dz*dz)-c.rest_length[k]; double v=std::abs(r); s1+=v; s2+=r*r; sm=std::max(sm,v);} return ResidOut{ s1/std::max<size_t>(1,m), std::sqrt(s2/std::max<size_t>(1,m)), sm, c.x.size, c.ci.size }; };
         if (mode_==0) return compute_aos(cloth_aos_);
         if (mode_==1) return compute_soa(cloth_soa_);
