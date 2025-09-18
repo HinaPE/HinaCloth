@@ -117,8 +117,8 @@ static void bench_aosoa(int nx, int ny, int warmup, int steps) {
 
 static void bench_aligned(int nx, int ny, int warmup, int steps) {
     HinaPE::ClothAligned cloth; HinaPE::build_cloth_grid_aligned(cloth, nx, ny, 1.6f, 1.0f, 0.3f, true);
-    const size_t particles = cloth.x.size;
-    const size_t constraints = cloth.ci.size;
+    const size_t particles = cloth.x.size();
+    const size_t constraints = cloth.ci.size();
     HinaPE::XPBDParams params = default_params();
     const float dt = 1.f/240.f;
     auto run = [&](const char* tag, void(*fn)(HinaPE::ClothAligned&, float, const HinaPE::XPBDParams&)){
@@ -161,4 +161,3 @@ int main(int argc, char** argv) {
     }
     return 0;
 }
-

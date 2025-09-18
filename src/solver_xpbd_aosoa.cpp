@@ -1,135 +1,255 @@
 #include "aosoa/solver_xpbd_aosoa.h"
+#include "common/xpbd_solver_settings.h"
+
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+
 #if defined(HINACLOTH_HAVE_TBB)
 #include <tbb/parallel_for.h>
 #endif
 
 namespace HinaPE {
+namespace {
 
-static inline void index_to_block_lane_local(int idx, int& b, int& lane) { b = idx / AOSOA_BLOCK; lane = idx % AOSOA_BLOCK; }
+constexpr float kConstraintEpsilon = 1e-8f;
+constexpr float kConstraintEpsilonSq = kConstraintEpsilon * kConstraintEpsilon;
 
-void xpbd_step_native_aosoa(ClothAoSoA& cloth, float dt, const XPBDParams& params) {
-    float clamped_dt = std::clamp(dt, params.min_dt, params.max_dt);
-    int substeps = std::max(1, params.substeps);
-    float h = clamped_dt / (float)substeps;
+struct BlockIndex {
+    int block{0};
+    int lane{0};
+};
 
-    // warmstart
-    if (!params.warmstart) {
-        for (auto& blk : cloth.cblocks) {
-            for (int l=0;l<AOSOA_BLOCK;++l) blk.lambda[l] = 0.0f;
+[[nodiscard]] inline auto toBlockIndex(int idx) noexcept -> BlockIndex {
+    return {.block = idx / AOSOA_BLOCK, .lane = idx % AOSOA_BLOCK};
+}
+
+template <typename BlockLoop>
+void xpbd_step_aosoa_common(ClothAoSoA& cloth,
+                            const XPBDSolverSettings& settings,
+                            const XPBDParams& params,
+                            BlockLoop&& block_loop) {
+    if (cloth.count == 0) {
+        cloth.last_dt = settings.clamped_dt;
+        cloth.last_iterations = params.iterations;
+        return;
+    }
+
+    if (!settings.warmstart) {
+        for (auto& block : cloth.cblocks) {
+            for (int lane = 0; lane < AOSOA_BLOCK; ++lane) {
+                block.lambda[lane] = 0.0f;
+            }
         }
     } else {
-        for (auto& blk : cloth.cblocks) {
-            for (int l=0;l<AOSOA_BLOCK;++l) blk.lambda[l] *= params.lambda_decay;
+        for (auto& block : cloth.cblocks) {
+            for (int lane = 0; lane < AOSOA_BLOCK; ++lane) {
+                block.lambda[lane] *= settings.lambda_decay;
+            }
         }
     }
 
-    int nb = (cloth.count + AOSOA_BLOCK - 1)/AOSOA_BLOCK;
-    int ncb = (cloth.cons_count + AOSOA_BLOCK - 1)/AOSOA_BLOCK;
+    const float step_dt = settings.step_dt;
+    if (step_dt <= 0.0f) {
+        cloth.last_dt = settings.clamped_dt;
+        cloth.last_iterations = params.iterations;
+        return;
+    }
 
-    for (int s = 0; s < substeps; ++s) {
-        // predict
-        for (int b=0;b<nb;++b) {
-            auto& pb = cloth.pblocks[b];
-            for (int l=0;l<AOSOA_BLOCK;++l) {
-                pb.corr_x[l]=pb.corr_y[l]=pb.corr_z[l]=0.0f;
-                if (pb.inv_mass[l] == 0.0f) { pb.vx[l]=pb.vy[l]=pb.vz[l]=0; pb.px[l]=pb.x[l]; pb.py[l]=pb.y[l]; pb.pz[l]=pb.z[l]; continue; }
-                pb.vx[l]+=params.ax*h; pb.vy[l]+=params.ay*h; pb.vz[l]+=params.az*h;
-                pb.px[l]=pb.x[l]; pb.py[l]=pb.y[l]; pb.pz[l]=pb.z[l];
-                pb.x[l]+=pb.vx[l]*h; pb.y[l]+=pb.vy[l]*h; pb.z[l]+=pb.vz[l]*h;
+    const float ax_dt = params.ax * step_dt;
+    const float ay_dt = params.ay * step_dt;
+    const float az_dt = params.az * step_dt;
+    const float inv_h = settings.inv_step_dt;
+    const float alpha_dt = settings.alpha_dt;
+    const int iterations = settings.iterations;
+    const bool limit_correction = settings.max_correction > 0.0f;
+    const float max_correction_sq = settings.max_correction * settings.max_correction;
+
+    const int particle_blocks = static_cast<int>(cloth.pblocks.size());
+    const int constraint_blocks = static_cast<int>(cloth.cblocks.size());
+
+    auto predict = [&](int block) {
+        const int base = block * AOSOA_BLOCK;
+        auto& pb = cloth.pblocks[block];
+        for (int lane = 0; lane < AOSOA_BLOCK; ++lane) {
+            const int idx = base + lane;
+            if (idx >= cloth.count) {
+                break;
+            }
+            pb.corr_x[lane] = pb.corr_y[lane] = pb.corr_z[lane] = 0.0f;
+            if (pb.inv_mass[lane] == 0.0f) {
+                pb.vx[lane] = pb.vy[lane] = pb.vz[lane] = 0.0f;
+                pb.px[lane] = pb.x[lane];
+                pb.py[lane] = pb.y[lane];
+                pb.pz[lane] = pb.z[lane];
+                continue;
+            }
+            pb.vx[lane] += ax_dt;
+            pb.vy[lane] += ay_dt;
+            pb.vz[lane] += az_dt;
+            pb.px[lane] = pb.x[lane];
+            pb.py[lane] = pb.y[lane];
+            pb.pz[lane] = pb.z[lane];
+            pb.x[lane] += pb.vx[lane] * step_dt;
+            pb.y[lane] += pb.vy[lane] * step_dt;
+            pb.z[lane] += pb.vz[lane] * step_dt;
+        }
+    };
+
+    auto finalize_velocity = [&](int block) {
+        const int base = block * AOSOA_BLOCK;
+        auto& pb = cloth.pblocks[block];
+        for (int lane = 0; lane < AOSOA_BLOCK; ++lane) {
+            const int idx = base + lane;
+            if (idx >= cloth.count) {
+                break;
+            }
+            pb.vx[lane] = (pb.x[lane] - pb.px[lane]) * inv_h;
+            pb.vy[lane] = (pb.y[lane] - pb.py[lane]) * inv_h;
+            pb.vz[lane] = (pb.z[lane] - pb.pz[lane]) * inv_h;
+            if (settings.velocity_scale < 1.0f) {
+                pb.vx[lane] *= settings.velocity_scale;
+                pb.vy[lane] *= settings.velocity_scale;
+                pb.vz[lane] *= settings.velocity_scale;
             }
         }
+    };
 
-        const float alpha_dt = 1.0f/(h*h);
-        for (int it=0; it<std::max(1, params.iterations); ++it) {
-            for (int cb=0; cb<ncb; ++cb) {
-                auto& blk = cloth.cblocks[cb];
-                for (int l=0;l<AOSOA_BLOCK;++l) {
-                    int ii = blk.i[l]; int jj = blk.j[l];
-                    if (cb*AOSOA_BLOCK + l >= cloth.cons_count) break;
-                    int bi,li; index_to_block_lane_local(ii,bi,li);
-                    int bj,lj; index_to_block_lane_local(jj,bj,lj);
+    for (int substep = 0; substep < settings.substeps; ++substep) {
+        block_loop(particle_blocks, predict);
+
+        for (int iter = 0; iter < iterations; ++iter) {
+            for (int block = 0; block < constraint_blocks; ++block) {
+                auto& cb = cloth.cblocks[block];
+                const int base = block * AOSOA_BLOCK;
+                for (int lane = 0; lane < AOSOA_BLOCK; ++lane) {
+                    const int constraint_idx = base + lane;
+                    if (constraint_idx >= cloth.cons_count) {
+                        break;
+                    }
+                    const int i_idx = cb.i[lane];
+                    const int j_idx = cb.j[lane];
+                    const auto [bi, li] = toBlockIndex(i_idx);
+                    const auto [bj, lj] = toBlockIndex(j_idx);
                     auto& pi = cloth.pblocks[bi];
                     auto& pj = cloth.pblocks[bj];
-                    float dx = pi.x[li]-pj.x[lj];
-                    float dy = pi.y[li]-pj.y[lj];
-                    float dz = pi.z[li]-pj.z[lj];
-                    float dist = std::sqrt(dx*dx + dy*dy + dz*dz);
-                    if (dist < 1e-8f) { blk.last_c[l]=0; blk.last_dlambda[l]=0; blk.last_nx[l]=blk.last_ny[l]=blk.last_nz[l]=0; continue; }
-                    float C = dist - blk.rest_length[l];
-                    float nx = dx/dist, ny = dy/dist, nz = dz/dist;
-                    float scale = params.compliance_scale_all;
-                    switch (blk.type[l]) {
-                        case ConstraintType::Structural: scale *= params.compliance_scale_structural; break;
-                        case ConstraintType::Shear: scale *= params.compliance_scale_shear; break;
-                        case ConstraintType::Bending: scale *= params.compliance_scale_bending; break;
-                        default: break;
+
+                    const float dx = pi.x[li] - pj.x[lj];
+                    const float dy = pi.y[li] - pj.y[lj];
+                    const float dz = pi.z[li] - pj.z[lj];
+                    const float dist_sq = dx * dx + dy * dy + dz * dz;
+                    if (dist_sq < kConstraintEpsilonSq) {
+                        if (settings.write_debug) {
+                            cb.last_c[lane] = 0.0f;
+                            cb.last_dlambda[lane] = 0.0f;
+                            cb.last_nx[lane] = cb.last_ny[lane] = cb.last_nz[lane] = 0.0f;
+                        }
+                        continue;
                     }
-                    float alpha_tilde = (blk.compliance[l] * scale) * alpha_dt;
-                    float wsum = pi.inv_mass[li] + pj.inv_mass[lj];
-                    float denom = wsum + alpha_tilde;
-                    if (denom <= 0.0f) { blk.last_c[l]=C; blk.last_dlambda[l]=0; blk.last_nx[l]=nx; blk.last_ny[l]=ny; blk.last_nz[l]=nz; continue; }
-                    float dlambda = (-C - alpha_tilde * blk.lambda[l]) / denom;
-                    blk.lambda[l] += dlambda;
-                    float sx=dlambda*nx, sy=dlambda*ny, sz=dlambda*nz;
-                    if (params.max_correction > 0.0f) {
-                        float mag = std::sqrt(sx*sx + sy*sy + sz*sz);
-                        if (mag > params.max_correction && mag > 0.0f) { float r=params.max_correction/mag; sx*=r; sy*=r; sz*=r; }
+
+                    const float dist = std::sqrt(dist_sq);
+                    const float nx = dx / dist;
+                    const float ny = dy / dist;
+                    const float nz = dz / dist;
+                    const float C = dist - cb.rest_length[lane];
+
+                    const float scale = complianceScale(settings, cb.type[lane]);
+                    const float alpha_tilde = (cb.compliance[lane] * scale) * alpha_dt;
+                    const float wsum = pi.inv_mass[li] + pj.inv_mass[lj];
+                    const float denom = wsum + alpha_tilde;
+                    if (denom <= 0.0f) {
+                        if (settings.write_debug) {
+                            cb.last_c[lane] = C;
+                            cb.last_dlambda[lane] = 0.0f;
+                            cb.last_nx[lane] = nx;
+                            cb.last_ny[lane] = ny;
+                            cb.last_nz[lane] = nz;
+                        }
+                        continue;
                     }
-                    if (pi.inv_mass[li]>0) { pi.x[li]+=pi.inv_mass[li]*sx; pi.y[li]+=pi.inv_mass[li]*sy; pi.z[li]+=pi.inv_mass[li]*sz; pi.corr_x[li]+=pi.inv_mass[li]*sx; pi.corr_y[li]+=pi.inv_mass[li]*sy; pi.corr_z[li]+=pi.inv_mass[li]*sz; }
-                    if (pj.inv_mass[lj]>0) { pj.x[lj]-=pj.inv_mass[lj]*sx; pj.y[lj]-=pj.inv_mass[lj]*sy; pj.z[lj]-=pj.inv_mass[lj]*sz; pj.corr_x[lj]-=pj.inv_mass[lj]*sx; pj.corr_y[lj]-=pj.inv_mass[lj]*sy; pj.corr_z[lj]-=pj.inv_mass[lj]*sz; }
-                    if (params.write_debug_fields) { blk.last_c[l]=C; blk.last_dlambda[l]=dlambda; blk.last_nx[l]=nx; blk.last_ny[l]=ny; blk.last_nz[l]=nz; }
+
+                    const float dlambda = (-C - alpha_tilde * cb.lambda[lane]) / denom;
+                    cb.lambda[lane] += dlambda;
+
+                    float sx = dlambda * nx;
+                    float sy = dlambda * ny;
+                    float sz = dlambda * nz;
+
+                    if (limit_correction) {
+                        const float mag_sq = sx * sx + sy * sy + sz * sz;
+                        if (mag_sq > max_correction_sq && mag_sq > 0.0f) {
+                            const float inv_mag = settings.max_correction / std::sqrt(mag_sq);
+                            sx *= inv_mag;
+                            sy *= inv_mag;
+                            sz *= inv_mag;
+                        }
+                    }
+
+                    if (pi.inv_mass[li] > 0.0f) {
+                        const float scale_i = pi.inv_mass[li];
+                        pi.x[li] += scale_i * sx;
+                        pi.y[li] += scale_i * sy;
+                        pi.z[li] += scale_i * sz;
+                        pi.corr_x[li] += scale_i * sx;
+                        pi.corr_y[li] += scale_i * sy;
+                        pi.corr_z[li] += scale_i * sz;
+                    }
+                    if (pj.inv_mass[lj] > 0.0f) {
+                        const float scale_j = pj.inv_mass[lj];
+                        pj.x[lj] -= scale_j * sx;
+                        pj.y[lj] -= scale_j * sy;
+                        pj.z[lj] -= scale_j * sz;
+                        pj.corr_x[lj] -= scale_j * sx;
+                        pj.corr_y[lj] -= scale_j * sy;
+                        pj.corr_z[lj] -= scale_j * sz;
+                    }
+
+                    if (settings.write_debug) {
+                        cb.last_c[lane] = C;
+                        cb.last_dlambda[lane] = dlambda;
+                        cb.last_nx[lane] = nx;
+                        cb.last_ny[lane] = ny;
+                        cb.last_nz[lane] = nz;
+                    }
                 }
             }
         }
 
-        // velocities
-        float inv_h = 1.0f/h;
-        for (int b=0;b<nb;++b) {
-            auto& pb = cloth.pblocks[b];
-            for (int l=0;l<AOSOA_BLOCK;++l) {
-                pb.vx[l]=(pb.x[l]-pb.px[l])*inv_h;
-                pb.vy[l]=(pb.y[l]-pb.py[l])*inv_h;
-                pb.vz[l]=(pb.z[l]-pb.pz[l])*inv_h;
-            }
-        }
-        if (params.velocity_damping>0.0f) {
-            float s = std::max(0.0f, 1.0f-params.velocity_damping);
-            for (int b=0;b<nb;++b) {
-                auto& pb = cloth.pblocks[b];
-                for (int l=0;l<AOSOA_BLOCK;++l) { pb.vx[l]*=s; pb.vy[l]*=s; pb.vz[l]*=s; }
-            }
-        }
+        block_loop(particle_blocks, finalize_velocity);
     }
 
-    cloth.last_dt = clamped_dt; cloth.last_iterations = params.iterations;
+    cloth.last_dt = settings.clamped_dt;
+    cloth.last_iterations = params.iterations;
+}
+
+} // namespace
+
+void xpbd_step_native_aosoa(ClothAoSoA& cloth, float dt, const XPBDParams& params) {
+    const auto settings = makeSolverSettings(dt, params);
+    auto sequential_loop = [](int blocks, auto&& body) {
+        for (int b = 0; b < blocks; ++b) {
+            body(b);
+        }
+    };
+    xpbd_step_aosoa_common(cloth, settings, params, sequential_loop);
 }
 
 void xpbd_step_tbb_aosoa(ClothAoSoA& cloth, float dt, const XPBDParams& params) {
 #if defined(HINACLOTH_HAVE_TBB)
-    // Parallelize predict/velocity by blocks; constraints remain native
-    float clamped_dt = std::clamp(dt, params.min_dt, params.max_dt);
-    int substeps = std::max(1, params.substeps);
-    float h = clamped_dt / (float)substeps;
-    int nb = (cloth.count + AOSOA_BLOCK - 1)/AOSOA_BLOCK; int ncb=(cloth.cons_count + AOSOA_BLOCK - 1)/AOSOA_BLOCK;
-    if (!params.warmstart) for (auto& cb: cloth.cblocks) for (int l=0;l<AOSOA_BLOCK;++l) cb.lambda[l]=0.0f; else for (auto& cb: cloth.cblocks) for (int l=0;l<AOSOA_BLOCK;++l) cb.lambda[l]*=params.lambda_decay;
-    for (int s=0;s<substeps;++s){
-        tbb::parallel_for(0, nb, [&](int b){ auto& pb=cloth.pblocks[b]; for (int l=0;l<AOSOA_BLOCK;++l){ pb.corr_x[l]=pb.corr_y[l]=pb.corr_z[l]=0.0f; if (pb.inv_mass[l]==0.0f){ pb.vx[l]=pb.vy[l]=pb.vz[l]=0; pb.px[l]=pb.x[l]; pb.py[l]=pb.y[l]; pb.pz[l]=pb.z[l]; } else { pb.vx[l]+=params.ax*h; pb.vy[l]+=params.ay*h; pb.vz[l]+=params.az*h; pb.px[l]=pb.x[l]; pb.py[l]=pb.y[l]; pb.pz[l]=pb.z[l]; pb.x[l]+=pb.vx[l]*h; pb.y[l]+=pb.vy[l]*h; pb.z[l]+=pb.vz[l]*h; } }});
-        const float alpha_dt=1.0f/(h*h);
-        for (int it=0; it<std::max(1, params.iterations); ++it){
-            for (int cb=0; cb<ncb; ++cb){ auto& blk=cloth.cblocks[cb]; for (int l=0;l<AOSOA_BLOCK;++l){ int k=cb*AOSOA_BLOCK + l; if (k>=cloth.cons_count) break; int ii=blk.i[l], jj=blk.j[l]; int bi=ii/AOSOA_BLOCK, li=ii% AOSOA_BLOCK; int bj=jj/AOSOA_BLOCK, lj=jj% AOSOA_BLOCK; auto& pi=cloth.pblocks[bi]; auto& pj=cloth.pblocks[bj]; float dx=pi.x[li]-pj.x[lj], dy=pi.y[li]-pj.y[lj], dz=pi.z[li]-pj.z[lj]; float dist=std::sqrt(dx*dx+dy*dy+dz*dz); if (dist<1e-8f){ if(params.write_debug_fields){ blk.last_c[l]=0; blk.last_dlambda[l]=0; blk.last_nx[l]=blk.last_ny[l]=blk.last_nz[l]=0;} continue; } float C=dist - blk.rest_length[l]; float nx=dx/dist, ny=dy/dist, nz=dz/dist; float scale=params.compliance_scale_all; switch(blk.type[l]){ case ConstraintType::Structural: scale*=params.compliance_scale_structural; break; case ConstraintType::Shear: scale*=params.compliance_scale_shear; break; case ConstraintType::Bending: scale*=params.compliance_scale_bending; break; default: break;} float alpha_tilde=(blk.compliance[l]*scale)*alpha_dt; float wsum=pi.inv_mass[li]+pj.inv_mass[lj]; float denom=wsum+alpha_tilde; if (denom<=0.0f){ if(params.write_debug_fields){ blk.last_c[l]=C; blk.last_dlambda[l]=0; blk.last_nx[l]=nx; blk.last_ny[l]=ny; blk.last_nz[l]=nz;} continue; } float dl=(-C - alpha_tilde*blk.lambda[l])/denom; blk.lambda[l]+=dl; float sx=dl*nx, sy=dl*ny, sz=dl*nz; if (params.max_correction>0.0f){ float mag=std::sqrt(sx*sx+sy*sy+sz*sz); if (mag>params.max_correction&&mag>0.0f){ float r=params.max_correction/mag; sx*=r; sy*=r; sz*=r; } } if (pi.inv_mass[li]>0){ pi.x[li]+=pi.inv_mass[li]*sx; pi.y[li]+=pi.inv_mass[li]*sy; pi.z[li]+=pi.inv_mass[li]*sz; } if (pj.inv_mass[lj]>0){ pj.x[lj]-=pj.inv_mass[lj]*sx; pj.y[lj]-=pj.inv_mass[lj]*sy; pj.z[lj]-=pj.inv_mass[lj]*sz; } if (params.write_debug_fields){ blk.last_c[l]=C; blk.last_dlambda[l]=dl; blk.last_nx[l]=nx; blk.last_ny[l]=ny; blk.last_nz[l]=nz; } }}
-        }
-        tbb::parallel_for(0, nb, [&](int b){ auto& pb=cloth.pblocks[b]; for (int l=0;l<AOSOA_BLOCK;++l){ float inv_h=1.0f/h; pb.vx[l]=(pb.x[l]-pb.px[l])*inv_h; pb.vy[l]=(pb.y[l]-pb.py[l])*inv_h; pb.vz[l]=(pb.z[l]-pb.pz[l])*inv_h; if (params.velocity_damping>0.0f){ float s=std::max(0.0f,1.0f-params.velocity_damping); pb.vx[l]*=s; pb.vy[l]*=s; pb.vz[l]*=s; } }});
-    }
-    cloth.last_dt=clamped_dt; cloth.last_iterations=params.iterations;
+    const auto settings = makeSolverSettings(dt, params);
+    auto parallel_loop = [](int blocks, auto&& body) {
+        tbb::parallel_for(0, blocks, [&](int b) {
+            body(b);
+        });
+    };
+    xpbd_step_aosoa_common(cloth, settings, params, parallel_loop);
 #else
     xpbd_step_native_aosoa(cloth, dt, params);
 #endif
 }
 
 void xpbd_step_avx2_aosoa(ClothAoSoA& cloth, float dt, const XPBDParams& params) {
-    // For AoSoA, keep native (AoSoA already cache-friendly). Advanced AVX2 would require lane-wise packing.
+    // AoSoA layout is already cache-friendly; reuse the native implementation.
     xpbd_step_native_aosoa(cloth, dt, params);
 }
 

@@ -1,28 +1,32 @@
 // AoS cloth data (Array of Structs)
-#ifndef HINACLOTH_CLOTH_DATA_AOS_H
-#define HINACLOTH_CLOTH_DATA_AOS_H
+#pragma once
 
-#include <vector>
-#include <cmath>
 #include "cloth_types.h"
+#include "common/cloth_grid_utils.h"
+
+#include <cmath>
+#include <stdexcept>
+#include <vector>
 
 namespace HinaPE {
 
 struct ParticleAOS {
-    float x, y, z;
-    float px, py, pz;
-    float vx, vy, vz;
-    float inv_mass;
+    float x{0.0f}, y{0.0f}, z{0.0f};
+    float px{0.0f}, py{0.0f}, pz{0.0f};
+    float vx{0.0f}, vy{0.0f}, vz{0.0f};
+    float inv_mass{1.0f};
     float corr_x{0.0f}, corr_y{0.0f}, corr_z{0.0f};
 };
 
 struct DistanceConstraintAOS {
-    int i, j;
-    float rest_length;
-    float compliance;
-    float lambda;
-    ConstraintType type;
-    float last_c{0.0f}, last_dlambda{0.0f};
+    int i{0};
+    int j{0};
+    float rest_length{0.0f};
+    float compliance{0.0f};
+    float lambda{0.0f};
+    ConstraintType type{ConstraintType::Structural};
+    float last_c{0.0f};
+    float last_dlambda{0.0f};
     float last_nx{0.0f}, last_ny{0.0f}, last_nz{0.0f};
 };
 
@@ -44,52 +48,85 @@ inline void build_cloth_grid_aos(ClothAOS& cloth,
                                  float comp_shear  = 1e-5f,
                                  float comp_bend   = 1e-4f)
 {
-    cloth = ClothAOS{};
-    cloth.nx = nx; cloth.ny = ny;
-    const float dx = width / (nx - 1);
-    const float dy = height / (ny - 1);
-    const float startX = -width * 0.5f;
+    if (nx < 2 || ny < 2) {
+        throw std::invalid_argument{"build_cloth_grid_aos requires nx, ny >= 2"};
+    }
 
-    cloth.particles.resize(nx * ny);
+    cloth = ClothAOS{};
+    cloth.nx = nx;
+    cloth.ny = ny;
+
+    const float dx = width / static_cast<float>(nx - 1);
+    const float dy = height / static_cast<float>(ny - 1);
+    const float start_x = -width * 0.5f;
+
+    const int particle_count = nx * ny;
+    cloth.particles.resize(particle_count);
+
     for (int j = 0; j < ny; ++j) {
         for (int i = 0; i < nx; ++i) {
-            int id = j*nx + i;
-            float x = startX + dx * i;
-            float y = start_y + dy * (ny - 1 - j);
-            float z = 0.0f;
-            cloth.particles[id] = ParticleAOS{ x,y,z, x,y,z, 0,0,0, 1.0f };
+            const int id = j * nx + i;
+            const float x = start_x + dx * static_cast<float>(i);
+            const float y = start_y + dy * static_cast<float>(ny - 1 - j);
+            auto& p = cloth.particles[id];
+            p = ParticleAOS{
+                .x = x, .y = y, .z = 0.0f,
+                .px = x, .py = y, .pz = 0.0f,
+                .vx = 0.0f, .vy = 0.0f, .vz = 0.0f,
+                .inv_mass = 1.0f,
+                .corr_x = 0.0f, .corr_y = 0.0f, .corr_z = 0.0f
+            };
         }
     }
+
     if (pin_top_corners) {
-        cloth.particles[0].inv_mass = 0.0f;
-        cloth.particles[nx-1].inv_mass = 0.0f;
+        cloth.particles.front().inv_mass = 0.0f;
+        cloth.particles[nx - 1].inv_mass = 0.0f;
     }
 
-    auto add_dist = [&](int a, int b, float comp, ConstraintType ct){
-        float dx0 = cloth.particles[a].x - cloth.particles[b].x;
-        float dy0 = cloth.particles[a].y - cloth.particles[b].y;
-        float dz0 = cloth.particles[a].z - cloth.particles[b].z;
-        float L0 = std::sqrt(dx0*dx0 + dy0*dy0 + dz0*dz0);
-        cloth.constraints.push_back(DistanceConstraintAOS{a,b,L0,comp,0.0f,ct});
+    const int total_constraints = detail::totalConstraintCount(nx, ny);
+    cloth.constraints.reserve(total_constraints);
+
+    auto add_constraint = [&](int a, int b, float compliance, ConstraintType type) {
+        const auto& pa = cloth.particles[a];
+        const auto& pb = cloth.particles[b];
+        const float dx0 = pa.x - pb.x;
+        const float dy0 = pa.y - pb.y;
+        const float dz0 = pa.z - pb.z;
+        const float rest = std::sqrt(dx0 * dx0 + dy0 * dy0 + dz0 * dz0);
+        cloth.constraints.push_back(DistanceConstraintAOS{
+            .i = a,
+            .j = b,
+            .rest_length = rest,
+            .compliance = compliance,
+            .lambda = 0.0f,
+            .type = type
+        });
     };
 
-    for (int j=0;j<ny;++j) for (int i=0;i<nx;++i) {
-        int id = j*nx+i;
-        if (i+1<nx) add_dist(id, id+1, comp_struct, ConstraintType::Structural);
-        if (j+1<ny) add_dist(id, id+nx, comp_struct, ConstraintType::Structural);
+    for (int j = 0; j < ny; ++j) {
+        for (int i = 0; i < nx; ++i) {
+            const int id = j * nx + i;
+            if (i + 1 < nx) { add_constraint(id, id + 1, comp_struct, ConstraintType::Structural); }
+            if (j + 1 < ny) { add_constraint(id, id + nx, comp_struct, ConstraintType::Structural); }
+        }
     }
-    for (int j=0;j<ny-1;++j) for (int i=0;i<nx-1;++i) {
-        int id = j*nx+i;
-        add_dist(id, id+nx+1, comp_shear, ConstraintType::Shear);
-        add_dist(id+1, id+nx, comp_shear, ConstraintType::Shear);
+
+    for (int j = 0; j + 1 < ny; ++j) {
+        for (int i = 0; i + 1 < nx; ++i) {
+            const int id = j * nx + i;
+            add_constraint(id, id + nx + 1, comp_shear, ConstraintType::Shear);
+            add_constraint(id + 1, id + nx, comp_shear, ConstraintType::Shear);
+        }
     }
-    for (int j=0;j<ny;++j) for (int i=0;i<nx;++i) {
-        int id = j*nx+i;
-        if (i+2<nx) add_dist(id, id+2, comp_bend, ConstraintType::Bending);
-        if (j+2<ny) add_dist(id, id+2*nx, comp_bend, ConstraintType::Bending);
+
+    for (int j = 0; j < ny; ++j) {
+        for (int i = 0; i < nx; ++i) {
+            const int id = j * nx + i;
+            if (i + 2 < nx) { add_constraint(id, id + 2, comp_bend, ConstraintType::Bending); }
+            if (j + 2 < ny) { add_constraint(id, id + 2 * nx, comp_bend, ConstraintType::Bending); }
+        }
     }
 }
 
 } // namespace HinaPE
-
-#endif // HINACLOTH_CLOTH_DATA_AOS_H
