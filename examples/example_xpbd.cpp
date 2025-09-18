@@ -95,16 +95,35 @@ struct Vertex {
 
 class XPBDRenderer final : public IRenderer {
 public:
-    void initialize(const EngineContext& eng) override {
+    void query_required_device_caps(RendererCaps& caps) override {
+        // Minimal requirements: we want an offscreen color attachment for our own rendering path
+        caps = RendererCaps{}; // start from defaults
+        caps.uses_depth = VK_FALSE;
+        caps.uses_offscreen = VK_TRUE;
+        caps.dynamic_rendering = VK_TRUE;
+        caps.color_attachments = { AttachmentRequest{ .name = "hdr_color", .format = VK_FORMAT_B8G8R8A8_UNORM } };
+        caps.presentation_attachment = "hdr_color"; // engine blits to swapchain
+        caps.presentation_mode = PresentationMode::EngineBlit;
+    }
+
+    void get_capabilities(const EngineContext& /*eng*/, RendererCaps& caps) override {
+        // Nothing extra beyond query stage currently.
+        (void)caps;
+    }
+
+    void initialize(const EngineContext& eng, const RendererCaps& /*caps*/, const FrameContext& initial_frame) override {
         device_ = eng.device;
         allocator_ = eng.allocator;
-
+        viewportW_ = (float)initial_frame.extent.width;
+        viewportH_ = (float)initial_frame.extent.height;
         buildPipelines();
         initCloth();
         allocateBuffers();
+        buildGeometry();
+        uploadGeometry();
     }
 
-    void destroy(const EngineContext& eng) override {
+    void destroy(const EngineContext& eng, const RendererCaps& /*caps*/) override {
         destroy_buffer(allocator_, vboLines_);
         destroy_buffer(allocator_, vboTris_);
         if (pipeLines_)   { vkDestroyPipeline(eng.device, pipeLines_, nullptr); pipeLines_ = VK_NULL_HANDLE; }
@@ -114,17 +133,41 @@ public:
         allocator_ = VK_NULL_HANDLE;
     }
 
-    void get_capabilities(RendererCaps& caps) const override {
-        caps = RendererCaps{};
-        caps.uses_depth = VK_FALSE;
-        caps.uses_offscreen = VK_TRUE;
-        caps.dynamic_rendering = VK_TRUE;
-    }
-
     void on_swapchain_ready(const EngineContext&, const FrameContext& frm) override {
-        // fit-to-view scaling using swapchain aspect
         viewportW_ = (float)frm.extent.width;
         viewportH_ = (float)frm.extent.height;
+    }
+
+    void simulate(const EngineContext&, const FrameContext& frm) override {
+        const float dt = (float)frm.dt_sec * sim_speed_;
+        if (simulate_) {
+            const auto& params = ui_params_;
+            auto use_native = backend_ == 0;
+            auto use_tbb    = backend_ == 1;
+            auto use_avx2   = backend_ == 2;
+            if (mode_ == 0) {
+                if (use_tbb) HinaPE::xpbd_step_tbb_aos(cloth_aos_, dt, params);
+                else if (use_avx2) HinaPE::xpbd_step_avx2_aos(cloth_aos_, dt, params);
+                else HinaPE::xpbd_step_native_aos(cloth_aos_, dt, params);
+            } else if (mode_ == 1) {
+                if (use_tbb) HinaPE::xpbd_step_tbb_soa(cloth_soa_, dt, params);
+                else if (use_avx2) HinaPE::xpbd_step_avx2_soa(cloth_soa_, dt, params);
+                else HinaPE::xpbd_step_native_soa(cloth_soa_, dt, params);
+            } else if (mode_ == 2) {
+                if (use_tbb) HinaPE::xpbd_step_tbb_aosoa(cloth_aosoa_, dt, params);
+                else if (use_avx2) HinaPE::xpbd_step_avx2_aosoa(cloth_aosoa_, dt, params);
+                else HinaPE::xpbd_step_native_aosoa(cloth_aosoa_, dt, params);
+            } else {
+                if (use_tbb) HinaPE::xpbd_step_tbb_aligned(cloth_aligned_, dt, params);
+                else if (use_avx2) HinaPE::xpbd_step_avx2_aligned(cloth_aligned_, dt, params);
+                else HinaPE::xpbd_step_native_aligned(cloth_aligned_, dt, params);
+            }
+        }
+    }
+
+    void update(const EngineContext&, const FrameContext&) override {
+        buildGeometry();
+        uploadGeometry();
     }
 
     void on_event(const SDL_Event& e, const EngineContext&, const FrameContext*) override {
@@ -170,37 +213,7 @@ public:
         ImGui::Text("L1=%.4g  L2=%.4g  Linf=%.4g", r.l1, r.l2, r.linf);
         ImGui::Text("pts=%zu  cons=%zu", r.npts, r.ncons);
         ImGui::End();
-
         if (on_step_once_) { simulate_ = false; on_step_once_ = false; }
-    }
-
-    void update(const EngineContext&, const FrameContext& frm) override {
-        const float dt = (float)frm.dt_sec * sim_speed_;
-        if (simulate_) {
-            const auto& params = ui_params_;
-            auto use_native = backend_ == 0;
-            auto use_tbb    = backend_ == 1;
-            auto use_avx2   = backend_ == 2;
-            if (mode_ == 0) {
-                if (use_tbb) HinaPE::xpbd_step_tbb_aos(cloth_aos_, dt, params);
-                else if (use_avx2) HinaPE::xpbd_step_avx2_aos(cloth_aos_, dt, params);
-                else HinaPE::xpbd_step_native_aos(cloth_aos_, dt, params);
-            } else if (mode_ == 1) {
-                if (use_tbb) HinaPE::xpbd_step_tbb_soa(cloth_soa_, dt, params);
-                else if (use_avx2) HinaPE::xpbd_step_avx2_soa(cloth_soa_, dt, params);
-                else HinaPE::xpbd_step_native_soa(cloth_soa_, dt, params);
-            } else if (mode_ == 2) {
-                if (use_tbb) HinaPE::xpbd_step_tbb_aosoa(cloth_aosoa_, dt, params);
-                else if (use_avx2) HinaPE::xpbd_step_avx2_aosoa(cloth_aosoa_, dt, params);
-                else HinaPE::xpbd_step_native_aosoa(cloth_aosoa_, dt, params);
-            } else {
-                if (use_tbb) HinaPE::xpbd_step_tbb_aligned(cloth_aligned_, dt, params);
-                else if (use_avx2) HinaPE::xpbd_step_avx2_aligned(cloth_aligned_, dt, params);
-                else HinaPE::xpbd_step_native_aligned(cloth_aligned_, dt, params);
-            }
-        }
-        buildGeometry();
-        uploadGeometry();
     }
 
     void record_graphics(VkCommandBuffer cmd, const EngineContext&, const FrameContext& frm) override {
@@ -350,7 +363,7 @@ private:
 
     void initCloth() {
         clothNx_ = 40;
-        clothNy_ = 25;
+        clothNy_ = 40;
         rebuildClothState();
     }
 
@@ -361,9 +374,9 @@ private:
     }
 
     void rebuildClothState() {
-        const float clothWidth = 1.6f;
-        const float clothHeight = 1.0f;
-        const float clothStartY = 0.3f;
+        const float clothWidth = 1.3f;
+        const float clothHeight = 1.3f;
+        const float clothStartY = -0.5f;
         const bool pinTopCorners = true;
         HinaPE::build_cloth_grid_aos(cloth_aos_, clothNx_, clothNy_, clothWidth, clothHeight, clothStartY, pinTopCorners);
         HinaPE::build_cloth_grid_soa(cloth_soa_, clothNx_, clothNy_, clothWidth, clothHeight, clothStartY, pinTopCorners);
@@ -544,9 +557,7 @@ private:
 int main() {
     try {
         VulkanEngine engine;
-        engine.state_.name = "XPBD Cloth (Vulkan Visualizer)";
-        engine.state_.width = 1280;
-        engine.state_.height = 720;
+        engine.configure_window(1280, 720, "XPBD Cloth (Vulkan Visualizer)");
         engine.set_renderer(std::make_unique<XPBDRenderer>());
         engine.init();
         engine.run();
