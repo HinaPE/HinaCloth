@@ -48,26 +48,10 @@ option(HINACLOTH_BUILD_TESTS "Build XPBD tests/benchmarks" OFF)
 
 # Setup oneTBB via helper script
 include(cmake/setup_tbb.cmake)
-# Link TBB headers/libs for libhinacloth compilation (PRIVATE so executables choose linkage policy)
-target_link_libraries(libhinacloth PRIVATE TBB::tbb)
+# Attach oneTBB to libhinacloth and expose availability to dependents
+use_tbb(libhinacloth)
 target_compile_definitions(libhinacloth PUBLIC HINACLOTH_HAVE_TBB=1)
 
-# Force using Release oneTBB for all configs (avoid *_debug import names on MSVC)
-if (DEFINED TBB_ROOT)
-    set(_TBB_LIB_DIR "${TBB_ROOT}/lib")
-    set(_TBB_BIN_DIR "${TBB_ROOT}/bin")
-    foreach(t IN ITEMS TBB::tbb TBB::tbbmalloc TBB::tbbmalloc_proxy)
-        if (TARGET ${t} AND CMAKE_CONFIGURATION_TYPES)
-            set_target_properties(${t} PROPERTIES MAP_IMPORTED_CONFIG_DEBUG Release)
-            if (EXISTS "${_TBB_LIB_DIR}/tbb12.lib")
-                # Best-effort: map Debug to Release artifacts
-                # (These props are harmless if the target is a static import target)
-                set_target_properties(${t} PROPERTIES
-                    IMPORTED_IMPLIB_DEBUG "${_TBB_LIB_DIR}/tbb12.lib")
-            endif()
-        endif()
-    endforeach()
-endif()
 if (HINACLOTH_BUILD_VULKAN_VISUALIZER)
     add_subdirectory(vulkan-visualizer)
 
