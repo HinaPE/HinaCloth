@@ -80,9 +80,11 @@ static void destroy_buffer(VmaAllocator allocator, GpuBuffer& buf) {
 #include "aos/cloth_data_aos.h"
 #include "soa/cloth_data_soa.h"
 #include "aosoa/cloth_data_aosoa.h"
+#include "aligned/cloth_data_aligned.h"
 #include "aos/solver_xpbd_aos.h"
 #include "soa/solver_xpbd_soa.h"
 #include "aosoa/solver_xpbd_aosoa.h"
+#include "aligned/solver_xpbd_aligned.h"
 
 struct Vertex {
     float x, y;      // NDC-space
@@ -129,6 +131,7 @@ public:
             if (sc == SDL_SCANCODE_1) mode_ = 0; // AoS
             else if (sc == SDL_SCANCODE_2) mode_ = 1; // SoA
             else if (sc == SDL_SCANCODE_3) mode_ = 2; // AoSoA
+            else if (sc == SDL_SCANCODE_4) mode_ = 3; // Aligned SoA
         }
     }
 
@@ -151,7 +154,8 @@ public:
         params.write_debug_fields = 0;
         if (mode_ == 0) HinaPE::xpbd_step_aos(cloth_aos_, dt, params);
         else if (mode_ == 1) HinaPE::xpbd_step_soa(cloth_soa_, dt, params);
-        else HinaPE::xpbd_step_aosoa(cloth_aosoa_, dt, params);
+        else if (mode_ == 2) HinaPE::xpbd_step_aosoa(cloth_aosoa_, dt, params);
+        else HinaPE::xpbd_step_aligned(cloth_aligned_, dt, params);
         buildGeometry();
         uploadGeometry();
     }
@@ -305,6 +309,7 @@ private:
         HinaPE::build_cloth_grid_aos(cloth_aos_, 40, 25, 1.6f, 1.0f, +0.3f, true);
         HinaPE::build_cloth_grid_soa(cloth_soa_, 40, 25, 1.6f, 1.0f, +0.3f, true);
         HinaPE::build_cloth_grid_aosoa(cloth_aosoa_, 40, 25, 1.6f, 1.0f, +0.3f, true);
+        HinaPE::build_cloth_grid_aligned(cloth_aligned_, 40, 25, 1.6f, 1.0f, +0.3f, true);
     }
 
     void buildGeometry() {
@@ -353,7 +358,7 @@ private:
                 float r = (invm==0.0f)?1.0f:1.0f, g=(invm==0.0f)?0.2f:0.8f, b=(invm==0.0f)?0.2f:0.3f;
                 addQuad(cloth_soa_.x[i], cloth_soa_.y[i], baseSize, r,g,b,1.0f);
             }
-        } else {
+        } else if (mode_ == 2) {
             int nb = (cloth_aosoa_.count + HinaPE::AOSOA_BLOCK - 1)/HinaPE::AOSOA_BLOCK;
             int ncb = (cloth_aosoa_.cons_count + HinaPE::AOSOA_BLOCK - 1)/HinaPE::AOSOA_BLOCK;
             for (int cb=0; cb<ncb; ++cb) {
@@ -377,6 +382,17 @@ private:
                     addQuad(pb.x[l], pb.y[l], baseSize, r,g,b,1.0f);
                 }
             }
+        } else {
+            // Aligned SoA
+            for (size_t k=0;k<cloth_aligned_.ci.size;++k) {
+                int ia = cloth_aligned_.ci[k], ib = cloth_aligned_.cj[k];
+                addLine(cloth_aligned_.x[ia], cloth_aligned_.y[ia], cloth_aligned_.x[ib], cloth_aligned_.y[ib], 0.2f,0.7f,1.0f,0.6f);
+            }
+            for (size_t i=0;i<cloth_aligned_.x.size;++i) {
+                float invm = cloth_aligned_.inv_mass[i];
+                float r = (invm==0.0f)?1.0f:1.0f, g=(invm==0.0f)?0.2f:0.8f, b=(invm==0.0f)?0.2f:0.3f;
+                addQuad(cloth_aligned_.x[i], cloth_aligned_.y[i], baseSize, r,g,b,1.0f);
+            }
         }
 
         lineVertCount_ = static_cast<uint32_t>(lineVerts_.size());
@@ -387,10 +403,12 @@ private:
         // Initial conservative sizes across all layouts
         size_t maxLines = std::max({ cloth_aos_.constraints.size()*2ull,
                                      cloth_soa_.ci.size()*2ull,
-                                     (size_t)cloth_aosoa_.cons_count*2ull }) + 1024;
+                                     (size_t)cloth_aosoa_.cons_count*2ull,
+                                     cloth_aligned_.ci.size*2ull }) + 1024;
         size_t maxTris  = std::max({ cloth_aos_.particles.size()*6ull,
                                      cloth_soa_.x.size()*6ull,
-                                     (size_t)cloth_aosoa_.count*6ull }) + 1024;
+                                     (size_t)cloth_aosoa_.count*6ull,
+                                     cloth_aligned_.x.size*6ull }) + 1024;
         create_buffer(allocator_, maxLines * sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vboLines_);
         create_buffer(allocator_, maxTris  * sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vboTris_);
     }
@@ -427,10 +445,11 @@ private:
     float viewportW_{1280.f};
     float viewportH_{720.f};
 
-    int mode_{0}; // 0: AoS, 1: SoA, 2: AoSoA
+    int mode_{0}; // 0: AoS, 1: SoA, 2: AoSoA, 3: Aligned SoA
     HinaPE::ClothAOS cloth_aos_{};
     HinaPE::ClothSOA cloth_soa_{};
     HinaPE::ClothAoSoA cloth_aosoa_{};
+    HinaPE::ClothAligned cloth_aligned_{};
 
     std::vector<Vertex> lineVerts_;
     std::vector<Vertex> triVerts_;
