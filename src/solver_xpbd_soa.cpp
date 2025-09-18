@@ -1,5 +1,4 @@
 #include "soa/solver_xpbd_soa.h"
-#include "common/xpbd_solver_settings.h"
 
 #include <algorithm>
 #include <cmath>
@@ -466,3 +465,4 @@ void xpbd_step_avx2_soa(ClothSOA& cloth, float dt, const XPBDParams& params) {
 }
 
 } // namespace HinaPE
+

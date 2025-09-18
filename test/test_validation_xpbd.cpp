@@ -28,6 +28,7 @@
 #include "soa/cloth_data_soa.h"
 #include "soa/solver_xpbd_soa.h"
 #include "xpbd_params.h"
+#include "cloth_grid_utils.h"
 
 namespace {
 

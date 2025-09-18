@@ -1,5 +1,4 @@
 #include "aosoa/solver_xpbd_aosoa.h"
-#include "common/xpbd_solver_settings.h"
 
 #include <algorithm>
 #include <cmath>
@@ -254,3 +253,4 @@ void xpbd_step_avx2_aosoa(ClothAoSoA& cloth, float dt, const XPBDParams& params)
 }
 
 } // namespace HinaPE
+

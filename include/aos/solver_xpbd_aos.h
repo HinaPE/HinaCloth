@@ -1,5 +1,7 @@
+#ifndef HINACLOTH_INCLUDE_AOS_SOLVER_XPBD_AOS_H
+#define HINACLOTH_INCLUDE_AOS_SOLVER_XPBD_AOS_H
+
 // XPBD AoS solver API
-#pragma once
 
 #include "xpbd_params.h"
 #include "aos/cloth_data_aos.h"
@@ -11,3 +13,5 @@ void xpbd_step_tbb_aos(ClothAOS& cloth, float dt, const XPBDParams& params);
 void xpbd_step_avx2_aos(ClothAOS& cloth, float dt, const XPBDParams& params);
 
 } // namespace HinaPE
+
+#endif  // HINACLOTH_INCLUDE_AOS_SOLVER_XPBD_AOS_H

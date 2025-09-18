@@ -86,6 +86,7 @@ static void destroy_buffer(VmaAllocator allocator, GpuBuffer& buf) {
 #include "soa/solver_xpbd_soa.h"
 #include "aosoa/solver_xpbd_aosoa.h"
 #include "aligned/solver_xpbd_aligned.h"
+#include "cloth_grid_utils.h"
 
 struct Vertex {
     float x, y;      // NDC-space

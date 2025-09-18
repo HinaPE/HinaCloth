@@ -1,5 +1,4 @@
 #include "aos/solver_xpbd_aos.h"
-#include "common/xpbd_solver_settings.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -476,6 +475,7 @@ void xpbd_step_avx2_aos(ClothAOS& cloth, float dt, const XPBDParams& params) {
 }
 
 } // namespace HinaPE
+
 
 
 

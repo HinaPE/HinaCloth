@@ -1,5 +1,4 @@
 #include "aligned/solver_xpbd_aligned.h"
-#include "common/xpbd_solver_settings.h"
 
 #include <algorithm>
 #include <cmath>
@@ -464,4 +463,5 @@ void xpbd_step_avx2_aligned(ClothAligned& cloth, float dt, const XPBDParams& par
 #endif
 }
 } // namespace HinaPE
+
 
