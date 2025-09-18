@@ -1,5 +1,7 @@
 # HinaCloth
-[![Windows CI](https://github.com/HinaPE/HinaCloth/actions/workflows/windows.yml/badge.svg?branch=master)](https://github.com/HinaPE/HinaCloth/actions/workflows/windows.yml)
+[![Windows CI](https://github.com/HinaPE/HinaCloth/actions/workflows/windows-build.yml/badge.svg?branch=master)](https://github.com/HinaPE/HinaCloth/actions/workflows/windows-build.yml)
+[![Linux CI](https://github.com/HinaPE/HinaCloth/actions/workflows/linux-build.yml/badge.svg?branch=master)](https://github.com/HinaPE/HinaCloth/actions/workflows/linux-build.yml)
+[![macOS CI](https://github.com/HinaPE/HinaCloth/actions/workflows/macos-build.yml/badge.svg?branch=master)](https://github.com/HinaPE/HinaCloth/actions/workflows/macos-build.yml)
 
 HinaCloth is an XPBD (eXtended Position-Based Dynamics) cloth simulation benchmark. It ships a high-performance C++ solver, PyBind11 bridge, a Blender 4.5 extension, and tooling to measure runtime and constraint quality across backends.
 
