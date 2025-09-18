@@ -15,9 +15,9 @@ add_library(libhinacloth STATIC ${HINACLOTH_SRC})
 target_include_directories(libhinacloth PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
 if (MSVC)
-    target_compile_options(libhinacloth PRIVATE $<$<CONFIG:Release>:/O2 /Ot /Oi /fp:fast>)
+    target_compile_options(libhinacloth PRIVATE $<$<CONFIG:Release>:/O2 /Ot /Oi /fp:fast /arch:AVX2>)
 else()
-    target_compile_options(libhinacloth PRIVATE $<$<CONFIG:Release>:-O3 -ffast-math -fomit-frame-pointer>)
+    target_compile_options(libhinacloth PRIVATE $<$<CONFIG:Release>:-O3 -ffast-math -fomit-frame-pointer -mavx2 -mfma>)
 endif()
 
 # Backward-compatible alias (if existing code refers to xpbd_core)
@@ -27,6 +27,29 @@ add_library(xpbd_core ALIAS libhinacloth)
 # Optionally build Vulkan visualizer and examples
 # ----------------------------------------------------------------------------
 option(HINACLOTH_BUILD_VULKAN_VISUALIZER "Build Vulkan visualizer and examples" OFF)
+
+# Setup oneTBB via helper script
+include(cmake/setup_tbb.cmake)
+# Link TBB headers/libs for libhinacloth compilation (PRIVATE so executables choose linkage policy)
+target_link_libraries(libhinacloth PRIVATE TBB::tbb)
+target_compile_definitions(libhinacloth PUBLIC HINACLOTH_HAVE_TBB=1)
+
+# Force using Release oneTBB for all configs (avoid *_debug import names on MSVC)
+if (DEFINED TBB_ROOT)
+    set(_TBB_LIB_DIR "${TBB_ROOT}/lib")
+    set(_TBB_BIN_DIR "${TBB_ROOT}/bin")
+    foreach(t IN ITEMS TBB::tbb TBB::tbbmalloc TBB::tbbmalloc_proxy)
+        if (TARGET ${t} AND CMAKE_CONFIGURATION_TYPES)
+            set_target_properties(${t} PROPERTIES MAP_IMPORTED_CONFIG_DEBUG Release)
+            if (EXISTS "${_TBB_LIB_DIR}/tbb12.lib")
+                # Best-effort: map Debug to Release artifacts
+                # (These props are harmless if the target is a static import target)
+                set_target_properties(${t} PROPERTIES
+                    IMPORTED_IMPLIB_DEBUG "${_TBB_LIB_DIR}/tbb12.lib")
+            endif()
+        endif()
+    endforeach()
+endif()
 if (HINACLOTH_BUILD_VULKAN_VISUALIZER)
     add_subdirectory(vulkan-visualizer)
 
@@ -72,6 +95,8 @@ if (HINACLOTH_BUILD_VULKAN_VISUALIZER)
     )
 
     target_link_libraries(example_xpbd PRIVATE vulkan_visualizer libhinacloth)
+    # Use helper to attach TBB to executable (handles runtime copy)
+    use_tbb(example_xpbd)
 
     if (WIN32)
         add_custom_command(TARGET example_xpbd POST_BUILD

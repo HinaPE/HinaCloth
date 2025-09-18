@@ -7,9 +7,10 @@
 
 namespace HinaPE {
 
-void xpbd_step_soa(ClothSOA& cloth, float dt, const XPBDParams& params);
+void xpbd_step_native_soa(ClothSOA& cloth, float dt, const XPBDParams& params);
+void xpbd_step_tbb_soa(ClothSOA& cloth, float dt, const XPBDParams& params);
+void xpbd_step_avx2_soa(ClothSOA& cloth, float dt, const XPBDParams& params);
 
 } // namespace HinaPE
 
 #endif // HINACLOTH_SOLVER_XPBD_SOA_H
-

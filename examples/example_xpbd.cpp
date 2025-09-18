@@ -132,6 +132,9 @@ public:
             else if (sc == SDL_SCANCODE_2) mode_ = 1; // SoA
             else if (sc == SDL_SCANCODE_3) mode_ = 2; // AoSoA
             else if (sc == SDL_SCANCODE_4) mode_ = 3; // Aligned SoA
+            else if (sc == SDL_SCANCODE_Q) backend_ = 0; // Native
+            else if (sc == SDL_SCANCODE_W) backend_ = 1; // TBB
+            else if (sc == SDL_SCANCODE_E) backend_ = 2; // AVX2
         }
     }
 
@@ -152,10 +155,26 @@ public:
         params.compliance_scale_bending = 1.0f;
         params.max_correction = 0.0f;
         params.write_debug_fields = 0;
-        if (mode_ == 0) HinaPE::xpbd_step_aos(cloth_aos_, dt, params);
-        else if (mode_ == 1) HinaPE::xpbd_step_soa(cloth_soa_, dt, params);
-        else if (mode_ == 2) HinaPE::xpbd_step_aosoa(cloth_aosoa_, dt, params);
-        else HinaPE::xpbd_step_aligned(cloth_aligned_, dt, params);
+        auto use_native = backend_ == 0;
+        auto use_tbb    = backend_ == 1;
+        auto use_avx2   = backend_ == 2;
+        if (mode_ == 0) {
+            if (use_tbb) HinaPE::xpbd_step_tbb_aos(cloth_aos_, dt, params);
+            else if (use_avx2) HinaPE::xpbd_step_avx2_aos(cloth_aos_, dt, params);
+            else HinaPE::xpbd_step_native_aos(cloth_aos_, dt, params);
+        } else if (mode_ == 1) {
+            if (use_tbb) HinaPE::xpbd_step_tbb_soa(cloth_soa_, dt, params);
+            else if (use_avx2) HinaPE::xpbd_step_avx2_soa(cloth_soa_, dt, params);
+            else HinaPE::xpbd_step_native_soa(cloth_soa_, dt, params);
+        } else if (mode_ == 2) {
+            if (use_tbb) HinaPE::xpbd_step_tbb_aosoa(cloth_aosoa_, dt, params);
+            else if (use_avx2) HinaPE::xpbd_step_avx2_aosoa(cloth_aosoa_, dt, params);
+            else HinaPE::xpbd_step_native_aosoa(cloth_aosoa_, dt, params);
+        } else {
+            if (use_tbb) HinaPE::xpbd_step_tbb_aligned(cloth_aligned_, dt, params);
+            else if (use_avx2) HinaPE::xpbd_step_avx2_aligned(cloth_aligned_, dt, params);
+            else HinaPE::xpbd_step_native_aligned(cloth_aligned_, dt, params);
+        }
         buildGeometry();
         uploadGeometry();
     }
@@ -445,7 +464,8 @@ private:
     float viewportW_{1280.f};
     float viewportH_{720.f};
 
-    int mode_{0}; // 0: AoS, 1: SoA, 2: AoSoA, 3: Aligned SoA
+    int mode_{0};    // 0: AoS, 1: SoA, 2: AoSoA, 3: Aligned SoA
+    int backend_{0}; // 0: Native, 1: TBB, 2: AVX2
     HinaPE::ClothAOS cloth_aos_{};
     HinaPE::ClothSOA cloth_soa_{};
     HinaPE::ClothAoSoA cloth_aosoa_{};
