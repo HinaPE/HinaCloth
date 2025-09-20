@@ -105,6 +105,20 @@ if (HINACLOTH_BUILD_VULKAN_VISUALIZER)
             COMMAND_EXPAND_LISTS
         )
     endif ()
+
+    # Additional comprehensive example covering more features
+    add_executable(example_xpbd_max ${EXAMPLES_DIR}/e_max.cpp)
+    target_link_libraries(example_xpbd_max PRIVATE libhinacloth)
+    # Attach TBB as well for parity
+    use_tbb(example_xpbd_max)
+    if (WIN32)
+        add_custom_command(TARGET example_xpbd_max POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_RUNTIME_DLLS:example_xpbd_max>
+                $<TARGET_FILE_DIR:example_xpbd_max>
+            COMMAND_EXPAND_LISTS
+        )
+    endif ()
 endif ()
 
 ## ----------------------------------------------------------------------------
