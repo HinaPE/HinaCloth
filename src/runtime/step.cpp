@@ -4,6 +4,7 @@
 #include "backend/storage/soa.h"
 #include "backend/scheduler/seq.h"
 #include "backend/kernel/constraints/distance.h"
+#include "backend/kernel/constraints/distance_avx2.h"
 #include "adapter/engine_adapter.h"
 #include <algorithm>
 #include <chrono>
@@ -44,6 +45,14 @@ namespace sim {
             const uint32_t* ebeg = m.edges.data() + 2 * base;
             const float*    rbeg = m.rest.data() + base;
             float*          lbeg = d.lambda_edge.empty() ? nullptr : (d.lambda_edge.data() + base);
+        #if defined(HINACLOTH_HAVE_AVX2)
+            if (d.exec_use_avx2) {
+                kernel_distance_project_avx2(ebeg, cnt, pos, rbeg,
+                                             d.inv_mass.empty() ? nullptr : d.inv_mass.data(),
+                                             lbeg, iterations, alpha, dt);
+                return;
+            }
+        #endif
             kernel_distance_project(ebeg, cnt, pos, rbeg,
                                     d.inv_mass.empty() ? nullptr : d.inv_mass.data(),
                                     lbeg, iterations, alpha, dt);

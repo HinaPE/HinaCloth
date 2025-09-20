@@ -34,6 +34,7 @@ namespace sim {
         // Exec parameters (from Policy.exec)
         bool  exec_use_tbb;
         int   exec_threads; // -1 auto
+        bool  exec_use_avx2;
     };
 
     bool core_data_create_from_state(const BuildDesc& in, const Model& m, Data*& out);

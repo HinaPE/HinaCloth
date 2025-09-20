@@ -42,8 +42,9 @@ namespace sim {
         d->gx = 0.0f; d->gy = -9.8f; d->gz = 0.0f;
         d->distance_compliance = 0.0f;
         // Exec policy
-        d->exec_use_tbb = (in.policy.exec.backend == Backend::TBB);
-        d->exec_threads = in.policy.exec.threads == 0 ? -1 : in.policy.exec.threads;
+        d->exec_use_tbb  = (in.policy.exec.backend == Backend::TBB);
+        d->exec_threads  = in.policy.exec.threads == 0 ? -1 : in.policy.exec.threads;
+        d->exec_use_avx2 = (in.policy.exec.backend == Backend::AVX2);
         // Map policy solve defaults
         d->solve_substeps   = in.policy.solve.substeps > 0 ? in.policy.solve.substeps : 1;
         d->solve_iterations = in.policy.solve.iterations > 0 ? in.policy.solve.iterations : 8;
@@ -153,6 +154,7 @@ namespace sim {
         d->solve_damping    = oldd.solve_damping;
         d->exec_use_tbb = oldd.exec_use_tbb;
         d->exec_threads = oldd.exec_threads;
+        d->exec_use_avx2 = oldd.exec_use_avx2;
         newd  = d;
         return true;
     }
