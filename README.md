@@ -272,3 +272,92 @@ Authoring 4+3
 * 在确定性与性能之间可拨档：默认高性能，需时可一键切到严格重现。
 
 接下来，我们可以围绕这份报告逐条细化：先给 PhaseGraph 的颜色规则与批粒度策略落规范，再把 AoSoA/AVX2 的内存对齐与载入约定写成小白皮书，最后补上事件重建与 remap 的状态迁移矩阵。
+
+---
+
+## 项目架构与设计 review（AI 自动生成）
+
+### 设计理念与架构亮点
+1. **4+3 抽象分层**
+   - 4（State/Parameters/Topology/Policy）与 3（Space/Operators/Events）将物理建模与执行策略彻底解耦，便于扩展和维护。
+   - 每一维度职责清晰，输入/输出路径明确，便于后续算子、后端、布局的无缝演进。
+2. **壳层 API 设计**
+   - `sim.h` 只暴露极简且稳定的入口（create/destroy/step/command/telemetry），对外屏蔽所有内部复杂性。
+   - 通过 BuildDesc 一次性打包所有输入，支持严格校验和懒打包，保证初始化高效且安全。
+3. **数据驱动与布局优先**
+   - AoS/SoA/AoSoA 等多布局支持，初始化时重排数据，运行期只关注高效执行，体现“数据优先”原则。
+   - 后端选型（Native/AVX2/TBB/GPU）与线程数、确定性等策略均可通过 Policy 灵活配置。
+4. **命令与事件机制**
+   - 运行期所有变更通过命令队列下发，结构性变更与小参数分流处理，保证帧边界的确定性和高吞吐。
+   - flush_commands 机制将命令分阶段应用，支持结构事件触发重建与迁移。
+5. **可观测性与遥测**
+   - 统一 Telemetry 查询接口，便于调参、性能回归和统计分析，支持最小开销常驻统计。
+6. **模块分工与代码组织**
+   - shell 层负责校验、翻译、打包、缓存追踪，彻底隔离 API 与引擎内部。
+   - core/model 固化烹制结果，core/data 维护时变数据，cooking/ 负责预处理与加速，backends/ 实现存储与算子，runtime/ 编排帧循环与命令事件，adapters/ 桥接壳层与引擎。
+   - examples/tests 提供完整用例与验证，便于回归和扩展。
+
+### 实现细节与工程规范
+- 代码风格统一，模块命名清晰，API 设计极简，便于外部集成和长期维护。
+- CMake 构建体系与 IDE 配置分离，支持 out-of-tree 构建和自动化测试。
+- 结构性参数与运行期参数分离，保证模型稳定性与运行期灵活性。
+- 命令队列与事件脚本机制，支持高效批量变更和结构重建。
+- 单元测试与示例代码覆盖典型用例，便于验证和回归。
+
+### 建议与展望
+- 可进一步完善遥测统计维度，支持更细粒度的性能与行为分析。
+- examples/tests 可增加异常路径和边界用例，提升健壮性。
+- cooking/ 可探索更多预处理优化策略，提升大规模场景下的初始化效率。
+- 后续可考虑 GPU 后端和异步执行模型，进一步提升性能和扩展性。
+
+---
+
+## 实现现状与差距评估（代码级 Review）
+
+基于当前代码库（src/… 模块）的快速走查，这里给出“按模块”的实现现状与与设计蓝图的差距评估，帮助明确下一步的落地顺序：
+
+- API / Shell（`src/api`, `src/shell`）
+  - 已有：对外稳定 API（create/destroy/step/push_command/flush/query_chosen/telemetry），以及最小化的校验、翻译（部分空实现）、打包（空实现）、缓存跟踪（占位 hash）。
+  - 差距：
+    - validators 仅做了基本尺寸/空指针检查，未覆盖 NaN、越界、重复关系、字段一致性等严格校验。
+    - translators/packers 基本为空，未做单位/坐标/别名归一化与 AoS→中立输入的强健打包。
+    - cache_tracker 仅拼接了少量指针/数值，未形成可复用的内容哈希；无缓存命中路径。
+
+- Cooking / Model（`src/cooking`, `src/core/model`）
+  - 已有：从 Topology 中取第一个二元关系（视为 edges），根据 StateInit 的 position 计算 rest-length，装入 Model（只含 node_count/edges/rest）。命令触发的 rebuild 走“复制 + 恒等 remap”的占位流程。
+  - 差距：
+    - 未识别 Operators/Space/Policy，对 PhaseGraph/批次/颜色/排序完全未构建。
+    - 无 Islanding、无 LayoutPlan（SoA/AoSoA/block 对齐/重排索引），无 Precompute 的权重/alpha/邻接/常量表。
+    - rebuild/Remap 仅做恒等映射，未处理节点增删、边变更后的状态迁移与 λ 清理。
+
+- Core Data（`src/core/data`）
+  - 已有：x/y/z、vx/vy/vz 与预测位置 px/py/pz，重力参数 gx/gy/gz；从外部 AoS 载入 position/velocity；小命令支持 SetParam(gravity_*)。
+  - 差距：
+    - XPBD 关键数据缺失：inv_mass、每约束 λ 缓冲、可选的固定/附件标志、面法线缓存、岛屿索引等。
+    - Overrides 覆盖面过窄（仅重力），缺少 iterations/substeps/damping 限定覆盖，缺少 pin/unpin、区域写入等小命令。
+
+- Backends：Storage / Kernels / Scheduler / Registry（`src/backend/...`）
+  - Storage：SoA 仅有轻量视图；AoSoA 为空壳，未提供对齐分配、块化访问与视图。
+  - Kernels：distance 仅做朴素 GS 投影，未按 XPBD 引入 compliance α 与 λ 累积；bending 占位；无 attachment/pin；无 AVX2 实现。
+  - Scheduler：seq 直调 kernel；tbb 占位（无并行）；无基于 PhaseGraph/Island 的两级调度与 barrier；无确定性分块。
+  - Registry：仅依据 Policy.exec 直选组合，未结合硬件能力与布局计划。
+
+- Runtime（`src/runtime`）
+  - 已有：最小帧循环（integrate → distance → finalize），忽略 ovr/policy，telemetry 仅填 0；phases/apply_events 均为空。
+  - 差距：
+    - 未实现子步/多迭代/阻尼；未按 PhaseGraph 与批次调度；无 BeforeFrame/AfterSolve 的完整命令相位；无残差统计、耗时分项。
+
+- 适配与示例（`src/adapter`, `examples/e_min.cpp`）
+  - 已有：engine_adapter 将 shell 与各子系统串起；示例 e_min 以网格 + distance 演示最小路径，并能动态改重力。
+  - 差距：
+    - 示例缺少 pin/attachment/bending/并行与确定性演示；无更多验证用例与基准。
+
+综上，当前实现已具备“端到端可跑通”的 MVP 骨架，验证了 API 形态与最小数据流；与 README 的完整蓝图相比，主要缺口集中在：
+
+1) XPBD 正确性：每约束 λ、compliance α、inv_mass/权重、稳定迭代策略。
+2) 计划与并行：PhaseGraph/颜色/批次、Islanding、确定性分块与 TBB 并行调度。
+3) 布局与存储：AoSoA、重排索引与 LayoutPlan、对齐与向量化友好访问。
+4) 运行期编排：子步/迭代/阻尼/相位化命令与事件、残差与耗时遥测。
+5) 扩展与鲁棒：bending/attachment/self-collision、严格校验、缓存与版本化、能力枚举。
+
+建议从“XPBD 正确性 + Policy 落地”为第一优先，随后引入 PhaseGraph/Islanding 与并行调度，再推进 AoSoA 与向量化。详细的分阶段实现路径、交付物与验收标准，已写入根目录的 `roadmap.md`，可据此推进开发与回归。
