@@ -118,6 +118,8 @@ endif()
 # =============================
 # Progressive Examples (ex00..ex05)
 # =============================
+set(HINA_SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/examples/shader)
+set(HINA_SHADER_BIN_DIR ${CMAKE_CURRENT_BINARY_DIR}/examples/shader)
 if (HINACLOTH_BUILD_EXAMPLES)
     set(EXAMPLES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/examples)
 
@@ -194,6 +196,10 @@ if (HINACLOTH_BUILD_EXAMPLES)
             target_compile_features(visual_vx01_sim_overview PRIVATE cxx_std_23)
             hinacloth_apply_common_warnings(visual_vx01_sim_overview)
             hinacloth_apply_release_opts(visual_vx01_sim_overview)
+            if (TARGET hinacloth_example_shaders)
+                add_dependencies(visual_vx01_sim_overview hinacloth_example_shaders)
+            endif()
+            target_compile_definitions(visual_vx01_sim_overview PRIVATE SHADER_OUTPUT_DIR="${HINA_SHADER_BIN_DIR}")
             if (WIN32)
                 add_custom_command(TARGET visual_vx01_sim_overview POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -208,6 +214,10 @@ if (HINACLOTH_BUILD_EXAMPLES)
             target_compile_features(visual_vx02_sim_controls PRIVATE cxx_std_23)
             hinacloth_apply_common_warnings(visual_vx02_sim_controls)
             hinacloth_apply_release_opts(visual_vx02_sim_controls)
+            if (TARGET hinacloth_example_shaders)
+                add_dependencies(visual_vx02_sim_controls hinacloth_example_shaders)
+            endif()
+            target_compile_definitions(visual_vx02_sim_controls PRIVATE SHADER_OUTPUT_DIR="${HINA_SHADER_BIN_DIR}")
             if (WIN32)
                 add_custom_command(TARGET visual_vx02_sim_controls POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -218,3 +228,27 @@ if (HINACLOTH_BUILD_EXAMPLES)
         endif()
     endif()
 endif()
+
+# =============================
+# Visual example shaders (GLSL -> SPIR-V) for top-level examples
+# =============================
+file(MAKE_DIRECTORY ${HINA_SHADER_BIN_DIR})
+find_program(HINA_GLSLC glslc HINTS ENV VULKAN_SDK PATH_SUFFIXES Bin bin)
+set(HINA_SHADER_LIST cloth_lines.vert cloth_lines.frag)
+set(HINA_SPV_FILES)
+foreach(SH ${HINA_SHADER_LIST})
+    set(SRC ${HINA_SHADER_SRC_DIR}/${SH})
+    set(SPV ${HINA_SHADER_BIN_DIR}/${SH}.spv)
+    if (HINA_GLSLC AND EXISTS ${SRC})
+        add_custom_command(OUTPUT ${SPV}
+            COMMAND ${HINA_GLSLC} -O -c ${SRC} -o ${SPV}
+            DEPENDS ${SRC}
+            COMMENT "[glslc] Compiling ${SH} -> ${SPV}"
+            VERBATIM)
+        list(APPEND HINA_SPV_FILES ${SPV})
+    endif()
+endforeach()
+if (HINA_SPV_FILES)
+    add_custom_target(hinacloth_example_shaders ALL DEPENDS ${HINA_SPV_FILES})
+endif()
+

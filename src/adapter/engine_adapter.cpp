@@ -158,4 +158,18 @@ namespace sim {
         out = e->chosen;
         return true;
     }
+
+    Status engine_copy_positions(EngineHandle* e, float* dst, size_t maxCount, size_t* outCount) {
+        if (!e || !e->data || !dst) return Status::InvalidArgs;
+        const Data& d = *e->data;
+        size_t n = d.x.size();
+        size_t cnt = (maxCount == 0 || maxCount > n) ? n : maxCount;
+        for (size_t i = 0; i < cnt; ++i) {
+            dst[3*i + 0] = d.x[i];
+            dst[3*i + 1] = d.y[i];
+            dst[3*i + 2] = d.z[i];
+        }
+        if (outCount) *outCount = cnt;
+        return Status::Ok;
+    }
 }

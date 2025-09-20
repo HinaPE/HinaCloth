@@ -5,6 +5,7 @@
 #include "commands.h"
 #include "telemetry.h"
 #include "capability.h"
+#include <cstddef>
 
 namespace sim {
     struct Solver;
@@ -22,6 +23,10 @@ namespace sim {
 
     [[nodiscard]] Result<Chosen> query_chosen(Solver* s);
     [[nodiscard]] Status telemetry_query_frame(Solver* s, TelemetryFrame* out);
+
+    // New: Copy current positions into dst (interleaved float3: x,y,z).
+    // If maxCount==0, copies all nodes. Returns Ok on success.
+    Status copy_positions(Solver* s, float* dst, size_t maxCount, size_t* outCount);
 }
 
 #endif //HINACLOTH_SIM_H
