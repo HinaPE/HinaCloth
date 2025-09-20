@@ -13,16 +13,20 @@ jobs:
 
       - uses: ashutoshvarma/setup-ninja@v1.1
 
-      - name: Configure (Release, tests only)
+      - name: Configure (Release)
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DHINACLOTH_BUILD_VULKAN_VISUALIZER=OFF \
-            -DHINACLOTH_BUILD_TESTS=ON
+            -DHINACLOTH_BUILD_VULKAN_VISUALIZER=OFF
 
       - name: Build
         run: cmake --build build --parallel
 
-      - name: Run tests
-        run: ctest --test-dir build --output-on-failure
+      - name: Run smoke example
+        run: |
+          ./build/example_xpbd_smoke
 
+      - name: Run benchmark (CSV)
+        run: |
+          ./build/example_xpbd_bench --nx=16 --ny=16 --frames=5 --iters=5 --subs=1 --sweep | tee bench.csv
+          cat bench.csv

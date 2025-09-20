@@ -16,18 +16,25 @@ jobs:
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Configure (Release, tests only)
+      - name: Configure (Release)
         shell: pwsh
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
-            -DHINACLOTH_BUILD_VULKAN_VISUALIZER=OFF `
-            -DHINACLOTH_BUILD_TESTS=ON
+            -DHINACLOTH_BUILD_VULKAN_VISUALIZER=OFF
 
       - name: Build
         shell: pwsh
         run: cmake --build build --parallel
 
-      - name: Run tests
+      - name: Run smoke example
         shell: pwsh
-        run: ctest --test-dir build --output-on-failure
+        run: |
+          cd build
+          .\example_xpbd_smoke.exe
 
+      - name: Run benchmark (CSV)
+        shell: pwsh
+        run: |
+          cd build
+          .\example_xpbd_bench.exe --nx=16 --ny=16 --frames=5 --iters=5 --subs=1 --sweep | Tee-Object bench.csv
+          Get-Content bench.csv

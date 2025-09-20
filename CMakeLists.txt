@@ -105,3 +105,8 @@ if (EXISTS ${EXAMPLES_DIR}/e_flag.cpp)
     add_executable(example_xpbd_flag ${EXAMPLES_DIR}/e_flag.cpp)
     _hina_setup_example(example_xpbd_flag)
 endif()
+
+if (EXISTS ${EXAMPLES_DIR}/e_bench.cpp)
+    add_executable(example_xpbd_bench ${EXAMPLES_DIR}/e_bench.cpp)
+    _hina_setup_example(example_xpbd_bench)
+endif()

@@ -361,3 +361,53 @@ Authoring 4+3
 5) 扩展与鲁棒：bending/attachment/self-collision、严格校验、缓存与版本化、能力枚举。
 
 建议从“XPBD 正确性 + Policy 落地”为第一优先，随后引入 PhaseGraph/Islanding 与并行调度，再推进 AoSoA 与向量化。详细的分阶段实现路径、交付物与验收标准，已写入根目录的 `roadmap.md`，可据此推进开发与回归。
+
+---
+
+## PhaseGraph 颜色规则（规范 v1）
+
+- 目标：在每个 island 内，对写同一字段的约束避免并发写冲突；形成阶段（phase）与批次（batch）。
+- 写集/读集：由 Operators 声明字段用途（FieldUse.name + write 标志）推导；同一字段上的写与写、写与读冲突。
+- 染色：
+  - 输入：一族关系（如 edges/bend_pairs）与参与这些关系的 Operators。
+  - 对每类关系独立染色；同一颜色批内的算子实例无写冲突，可并行。
+  - 稳定顺序键：按 (relation_tag, op_id, field_name) 的字典序先排序，再基于首次可用颜色贪心着色，保证确定性。
+- 执行序：island → phase（颜色）→ batch（固定分块，默认 block=64 约束/任务）。
+
+## AoSoA/AVX2 约定（小白皮书 v1）
+
+- 块大小（block）：默认 8/16（按 Policy.pack.block_size 或 Model.layout_block_size）；对齐到 32B（AVX2 载入友好）。
+- 布局：每个块存储 x_block[block], y_block[block], z_block[block]，相邻块线性递增；避免跨 cacheline 的混合访存。
+- 载入：
+  - SoA：可按标量或 AVX/Gather 读；长度保护 sqrt/rsqrt 下限 1e-16。
+  - AoSoA：优先块内线性读写；必要时使用 gather 计算偏移（Tail 走标量）。
+- 回退：编译期无 AVX2 或运行期策略禁用时，统一回到标量路径，接口不变。
+
+## 事件重建与 Remap（状态迁移矩阵 v1）
+
+- 结构事件（增删点/边、启停算子、布局策略变更）仅在帧边界应用：
+  - Cooking 产生新 Model；Remap 依据映射（old→new）搬迁 Data。
+- 迁移策略：
+  - 节点向量（x/y/z, v/px）：按映射复制；新增节点初始化为 0 或目标默认值；丢失节点丢弃。
+  - 约束 λ：按新拓扑大小重新分配并清零；避免旧 λ 在新结构下污染结果。
+  - AoSoA 缓冲：按新节点数和 block_size 重新分配；帧内使用时再打包/解包。
+- 连续性保证：重建后首帧不爆 NaN；残差与速度连续（Pin 点速度置 0）。
+
+## 基准与 CI（Stage 7）
+
+- 可执行：`example_xpbd_bench` 输出 CSV 便于采集（backend,layout,threads,nx,ny,edges,substeps,iterations,avg_ms）。
+- 典型使用：
+  - Windows（cmd）
+    ```cmd
+    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+    cmake --build build --parallel
+    build\example_xpbd_bench.exe --nx=64 --ny=64 --frames=120 --iters=10 --subs=2 --sweep
+    ```
+  - Linux/macOS（bash）
+    ```bash
+    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+    cmake --build build --parallel
+    ./build/example_xpbd_bench --nx=64 --ny=64 --frames=120 --iters=10 --subs=2 --sweep | tee bench.csv
+    ```
+- 能力枚举：`enumerate_capabilities` 返回当前构建支持的 (backend×layout) 组合（Native/AVX2/TBB × SoA/Blocked）。
+- CI：Linux/macOS/Windows 三平台均构建 Release，并运行 `example_xpbd_smoke` 与小规模 bench 扫描；日志中保留 CSV 以便回归。
