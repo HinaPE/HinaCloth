@@ -100,7 +100,23 @@ endif()
 hinacloth_apply_release_opts(libhinacloth)
 
 # =============================
- # Progressive Examples (ex00..ex05)
+# Vulkan visualizer (optional library)
+# =============================
+option(HINACLOTH_WITH_VULKAN_VISUALIZER "Enable building the Vulkan visualizer library and visual examples" ON)
+if (HINACLOTH_WITH_VULKAN_VISUALIZER)
+    if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vulkan-visualizer/CMakeLists.txt)
+        add_subdirectory(vulkan-visualizer)
+        set(HINACLOTH_HAVE_VULKAN_VISUALIZER ON)
+    else()
+        message(WARNING "vulkan-visualizer subdirectory not found; visual examples will be skipped.")
+        set(HINACLOTH_HAVE_VULKAN_VISUALIZER OFF)
+    endif()
+else()
+    set(HINACLOTH_HAVE_VULKAN_VISUALIZER OFF)
+endif()
+
+# =============================
+# Progressive Examples (ex00..ex05)
 # =============================
 if (HINACLOTH_BUILD_EXAMPLES)
     set(EXAMPLES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/examples)
@@ -152,5 +168,53 @@ if (HINACLOTH_BUILD_EXAMPLES)
     if (EXISTS ${EXAMPLES_DIR}/ex06_bench_cli.cpp)
         add_executable(example_ex06_bench ${EXAMPLES_DIR}/ex06_bench_cli.cpp)
         _hina_setup_example(example_ex06_bench)
+    endif()
+
+    # =============================
+    # Visualizer-based examples (vx00..)
+    # =============================
+    if (HINACLOTH_HAVE_VULKAN_VISUALIZER)
+        if (EXISTS ${EXAMPLES_DIR}/vx00_window.cpp)
+            add_executable(visual_vx00_window ${EXAMPLES_DIR}/vx00_window.cpp)
+            target_link_libraries(visual_vx00_window PRIVATE vulkan_visualizer libhinacloth)
+            target_compile_features(visual_vx00_window PRIVATE cxx_std_23)
+            hinacloth_apply_common_warnings(visual_vx00_window)
+            hinacloth_apply_release_opts(visual_vx00_window)
+            if (WIN32)
+                add_custom_command(TARGET visual_vx00_window POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        $<TARGET_RUNTIME_DLLS:visual_vx00_window>
+                        $<TARGET_FILE_DIR:visual_vx00_window>
+                    COMMAND_EXPAND_LISTS)
+            endif()
+        endif()
+        if (EXISTS ${EXAMPLES_DIR}/vx01_sim_overview.cpp)
+            add_executable(visual_vx01_sim_overview ${EXAMPLES_DIR}/vx01_sim_overview.cpp)
+            target_link_libraries(visual_vx01_sim_overview PRIVATE vulkan_visualizer libhinacloth)
+            target_compile_features(visual_vx01_sim_overview PRIVATE cxx_std_23)
+            hinacloth_apply_common_warnings(visual_vx01_sim_overview)
+            hinacloth_apply_release_opts(visual_vx01_sim_overview)
+            if (WIN32)
+                add_custom_command(TARGET visual_vx01_sim_overview POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        $<TARGET_RUNTIME_DLLS:visual_vx01_sim_overview>
+                        $<TARGET_FILE_DIR:visual_vx01_sim_overview>
+                    COMMAND_EXPAND_LISTS)
+            endif()
+        endif()
+        if (EXISTS ${EXAMPLES_DIR}/vx02_sim_controls.cpp)
+            add_executable(visual_vx02_sim_controls ${EXAMPLES_DIR}/vx02_sim_controls.cpp)
+            target_link_libraries(visual_vx02_sim_controls PRIVATE vulkan_visualizer libhinacloth)
+            target_compile_features(visual_vx02_sim_controls PRIVATE cxx_std_23)
+            hinacloth_apply_common_warnings(visual_vx02_sim_controls)
+            hinacloth_apply_release_opts(visual_vx02_sim_controls)
+            if (WIN32)
+                add_custom_command(TARGET visual_vx02_sim_controls POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        $<TARGET_RUNTIME_DLLS:visual_vx02_sim_controls>
+                        $<TARGET_FILE_DIR:visual_vx02_sim_controls>
+                    COMMAND_EXPAND_LISTS)
+            endif()
+        endif()
     endif()
 endif()
