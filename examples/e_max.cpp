@@ -84,8 +84,9 @@ int main()
     Param pgx{}; pgx.name = "gravity_x"; pgx.type = ParamType::F32; pgx.value.f32 = 0.0f;
     Param pgy{}; pgy.name = "gravity_y"; pgy.type = ParamType::F32; pgy.value.f32 = -9.8f;
     Param pgz{}; pgz.name = "gravity_z"; pgz.type = ParamType::F32; pgz.value.f32 = 0.0f;
-    Param params_arr[3] = {pgx, pgy, pgz};
-    Parameters params{params_arr, 3};
+    Param pcomp{}; pcomp.name = "distance_compliance"; pcomp.type = ParamType::F32; pcomp.value.f32 = 0.0f; // PBD-like
+    Param params_arr[4] = {pgx, pgy, pgz, pcomp};
+    Parameters params{params_arr, 4};
 
     // Exec：尝试 TBB + Auto 布局；Solve：子步/迭代/阻尼
     Policy pol{{DataLayout::Auto, Backend::TBB, 4, true, true}, {2, 10, 0.02f, TimeStepper::Symplectic}};
@@ -159,11 +160,12 @@ int main()
     push_command(s, cmd_enable_bending);
     push_command(s, cmd_disable_bending);
 
-    // 小命令：SetFieldRegion（当前未消费）
+    // 小命令：SetFieldRegion 演示 pin 顶边（将 inv_mass 置 0）
     struct RegionWrite { const char* field; uint32_t start; uint32_t count; float v[3]; };
-    RegionWrite rw{"position", 0u, 1u, {0.0f, 0.5f, 0.0f}};
-    Command cmd_region{CommandTag::SetFieldRegion, &rw, sizeof(rw)};
-    push_command(s, cmd_region);
+    // 顶边共有 nx 个顶点，从 0 到 nx-1
+    RegionWrite pinTop{"inv_mass", 0u, (uint32_t)nx, {0.0f, 0.0f, 0.0f}};
+    Command cmd_pin_top{CommandTag::SetFieldRegion, &pinTop, sizeof(pinTop)};
+    push_command(s, cmd_pin_top);
 
     // 自定义命令（未消费）
     int custom_payload = 42;

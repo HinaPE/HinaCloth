@@ -1,13 +1,13 @@
 #include "api/build.h"
 
 namespace sim {
-    static void pack_state(StateInit& s) {
+    static void pack_state([[maybe_unused]] StateInit& s) {
     }
 
-    static void pack_topology(TopologyIn& t) {
+    static void pack_topology([[maybe_unused]] TopologyIn& t) {
     }
 
-    static void pack_parameters(Parameters& p) {
+    static void pack_parameters([[maybe_unused]] Parameters& p) {
     }
 
     void shell_pack(BuildDesc& d) {

@@ -18,9 +18,19 @@ namespace sim {
         std::vector<float> px;
         std::vector<float> py;
         std::vector<float> pz;
+        // XPBD node properties
+        std::vector<float> inv_mass;   // per node inverse mass (0 -> pinned)
+        // XPBD constraint state
+        std::vector<float> lambda_edge; // per-edge lambda accumulator
+        // Global parameters
         float gx;
         float gy;
         float gz;
+        float distance_compliance; // compliance for distance constraints (0 => PBD)
+        // Solve parameters (policy defaults, overridable at runtime)
+        int   solve_substeps;
+        int   solve_iterations;
+        float solve_damping;
     };
 
     bool core_data_create_from_state(const BuildDesc& in, const Model& m, Data*& out);

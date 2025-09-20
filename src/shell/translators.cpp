@@ -1,10 +1,10 @@
 #include "api/build.h"
 
 namespace sim {
-    static void normalize_units(BuildDesc& d) {
+    static void normalize_units([[maybe_unused]] BuildDesc& d) {
     }
 
-    static void normalize_fields(BuildDesc& d) {
+    static void normalize_fields([[maybe_unused]] BuildDesc& d) {
     }
 
     static void normalize_policy(BuildDesc& d) {

@@ -14,7 +14,7 @@ namespace sim {
     };
 
     template <class T>
-    struct Result {
+    struct [[nodiscard]] Result {
         Status status;
         T value;
     };

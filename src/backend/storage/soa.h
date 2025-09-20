@@ -7,10 +7,10 @@ namespace sim {
         float* x;
         float* y;
         float* z;
-        size_t n;
+        std::size_t n;
     };
 
-    inline void storage_bind_soa(SoAView3& v, float* px, float* py, float* pz, size_t n) {
+    inline void storage_bind_soa(SoAView3& v, float* px, float* py, float* pz, std::size_t n) noexcept {
         v.x = px;
         v.y = py;
         v.z = pz;
