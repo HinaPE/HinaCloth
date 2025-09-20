@@ -14,6 +14,10 @@ namespace sim {
         // Layout plan (Stage 3)
         std::vector<uint32_t> node_remap; // author index -> internal index
         uint32_t layout_block_size{8};    // preferred AoSoA block size
+        // Stage 4: Bending constraints (optional)
+        // bend_pairs: flatten quadruples [i0,i1,i2,i3] per constraint
+        std::vector<uint32_t> bend_pairs;
+        std::vector<float>    bend_rest_angle; // per bend constraint
     };
 
     void core_model_destroy(Model* m);

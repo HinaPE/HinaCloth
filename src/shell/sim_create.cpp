@@ -44,6 +44,9 @@ namespace sim {
             return r;
         }
         s->tf.step_ms             = 0.0;
+        s->tf.residual_avg        = 0.0;
+        s->tf.last_rebuild_ms     = 0.0;
+        s->tf.avg_rebuild_ms      = 0.0;
         s->tf.commands_applied    = 0;
         s->tf.structural_rebuilds = 0;
         // Query actual chosen from engine

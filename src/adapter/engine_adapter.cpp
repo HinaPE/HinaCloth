@@ -114,6 +114,19 @@ namespace sim {
         core_remapplan_destroy(plan);
         e->model = nm;
         e->data  = nd;
+        // Stage 4: remap robustness - resize constraint state to new edge count and clear invalid lambdas
+        if (e->data) {
+            std::size_t ecount = e->model ? (e->model->edges.size() / 2) : 0u;
+            e->data->lambda_edge.assign(ecount, 0.0f);
+            // Ensure AoSoA buffer consistent with layout
+            if (e->data->exec_layout_blocked) {
+                unsigned int blk = e->data->layout_block_size > 0 ? e->data->layout_block_size : (e->model && e->model->layout_block_size ? e->model->layout_block_size : 8u);
+                e->data->layout_block_size = blk;
+                std::size_t n = e->data->px.size();
+                std::size_t nb = (n + (std::size_t)blk - 1) / (std::size_t)blk;
+                e->data->pos_aosoa.assign(3u * (std::size_t)blk * nb, 0.0f);
+            }
+        }
         e->rebuilds += 1ull;
         e->applied += (unsigned long long) count;
         return Status::Ok;

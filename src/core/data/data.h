@@ -39,6 +39,14 @@ namespace sim {
         bool  exec_layout_blocked; // true => use AoSoA blocked layout during solve
         unsigned int layout_block_size; // AoSoA block size (8/16)
         std::vector<float> pos_aosoa;   // 3*block*ceil(n/block) packed positions buffer for AoSoA
+        // Stage 4: operator enables
+        bool  op_enable_attachment;
+        bool  op_enable_bending;
+        // Stage 4: attachment operator data (per node)
+        std::vector<float> attach_w;   // [0,1], 0=off, 1=hard target
+        std::vector<float> attach_tx;
+        std::vector<float> attach_ty;
+        std::vector<float> attach_tz;
     };
 
     bool core_data_create_from_state(const BuildDesc& in, const Model& m, Data*& out);

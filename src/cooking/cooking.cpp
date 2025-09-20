@@ -6,6 +6,7 @@
 #include <vector>
 #include <cmath>
 #include <queue>
+#include <algorithm>
 
 namespace sim {
     static const void* find_field(const StateInit& st, const char* name, size_t comps, size_t& count, size_t& stride) {
@@ -94,6 +95,26 @@ namespace sim {
         (void) offset;
     }
 
+    static inline void cross3(float ax, float ay, float az, float bx, float by, float bz, float& rx, float& ry, float& rz){ rx = ay*bz - az*by; ry = az*bx - ax*bz; rz = ax*by - ay*bx; }
+    static inline float dot3(float ax, float ay, float az, float bx, float by, float bz){ return ax*bx+ay*by+az*bz; }
+    static inline float len3(float x, float y, float z){ return std::sqrt(x*x+y*y+z*z); }
+
+    static float dihedral_angle(const std::vector<float>& x, const std::vector<float>& y, const std::vector<float>& z,
+                                uint32_t i0, uint32_t i1, uint32_t i2, uint32_t i3) {
+        float e0x = x[i1]-x[i0], e0y = y[i1]-y[i0], e0z = z[i1]-z[i0];
+        float e1x = x[i2]-x[i0], e1y = y[i2]-y[i0], e1z = z[i2]-z[i0];
+        float e2x = x[i3]-x[i0], e2y = y[i3]-y[i0], e2z = z[i3]-z[i0];
+        float n1x,n1y,n1z,n2x,n2y,n2z;
+        cross3(e0x,e0y,e0z, e1x,e1y,e1z, n1x,n1y,n1z);
+        cross3(e0x,e0y,e0z, e2x,e2y,e2z, n2x,n2y,n2z);
+        float n1l = len3(n1x,n1y,n1z); float n2l = len3(n2x,n2y,n2z);
+        if (n1l <= 1e-12f || n2l <= 1e-12f) return 0.0f;
+        float c = dot3(n1x,n1y,n1z, n2x,n2y,n2z) / (n1l*n2l);
+        c = std::clamp(c, -1.0f, 1.0f);
+        float ang = std::acos(c);
+        return ang;
+    }
+
     bool cooking_build_model(const BuildDesc& in, Model*& out) {
         if (in.topo.node_count == 0) return false;
         Model* m = new(std::nothrow) Model();
@@ -101,18 +122,12 @@ namespace sim {
         m->node_count = in.topo.node_count;
         if (in.topo.relations && in.topo.relation_count > 0) {
             auto& rv = in.topo.relations[0];
-            if (rv.arity != 2) {
-                delete m;
-                return false;
-            }
+            if (rv.arity != 2) { delete m; return false; }
             m->edges.assign(rv.indices, rv.indices + rv.count * 2);
         }
-        size_t npos      = 0, spos = 0;
+        size_t npos = 0, spos = 0;
         const void* ppos = find_field(in.state, "position", 3, npos, spos);
-        if (!ppos || npos != m->node_count) {
-            delete m;
-            return false;
-        }
+        if (!ppos || npos != m->node_count) { delete m; return false; }
         std::vector<float> x, y, z;
         load_vec3_aos(ppos, npos, spos, x, y, z);
         size_t ecount = m->edges.size() / 2;
@@ -123,12 +138,25 @@ namespace sim {
             float dx   = x[b] - x[a];
             float dy   = y[b] - y[a];
             float dz   = z[b] - z[a];
-            float l    = std::sqrt(dx * dx + dy * dy + dz * dz);
-            m->rest[e] = l;
+            m->rest[e] = std::sqrt(dx * dx + dy * dy + dz * dz);
         }
-        // Stage 2: compute islands & reorder constraints by island
+        // Optional: parse bend_pairs if present (arity 4)
+        for (size_t r = 0; r < in.topo.relation_count; ++r) {
+            auto& rv = in.topo.relations[r];
+            if (!rv.tag || std::strcmp(rv.tag, "bend_pairs") != 0) continue;
+            if (rv.arity != 4) continue;
+            m->bend_pairs.assign(rv.indices, rv.indices + rv.count * 4);
+            m->bend_rest_angle.resize(rv.count);
+            for (size_t i = 0; i < rv.count; ++i) {
+                uint32_t i0 = m->bend_pairs[4*i+0];
+                uint32_t i1 = m->bend_pairs[4*i+1];
+                uint32_t i2 = m->bend_pairs[4*i+2];
+                uint32_t i3 = m->bend_pairs[4*i+3];
+                m->bend_rest_angle[i] = dihedral_angle(x,y,z,i0,i1,i2,i3);
+            }
+            break;
+        }
         compute_islands_and_reorder(*m);
-        // Stage 3: LayoutPlan defaults (identity remap and block size)
         m->node_remap.resize(m->node_count);
         for (uint32_t i = 0; i < m->node_count; ++i) m->node_remap[i] = i;
         if (in.pack.block_size > 0) m->layout_block_size = (uint32_t) in.pack.block_size;
@@ -144,14 +172,12 @@ namespace sim {
         m->rest       = cur.rest;
         m->island_count   = cur.island_count;
         m->island_offsets = cur.island_offsets;
-        // Preserve layout plan defaults across rebuild for now
         m->node_remap      = cur.node_remap;
         m->layout_block_size = cur.layout_block_size;
+        m->bend_pairs = cur.bend_pairs;
+        m->bend_rest_angle = cur.bend_rest_angle;
         RemapPlan* rp = new(std::nothrow) RemapPlan();
-        if (!rp) {
-            delete m;
-            return false;
-        }
+        if (!rp) { delete m; return false; }
         rp->old_to_new.resize(m->node_count);
         for (uint32_t i = 0; i < m->node_count; i++) rp->old_to_new[i] = i;
         out  = m;

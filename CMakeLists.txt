@@ -100,3 +100,8 @@ if (EXISTS ${EXAMPLES_DIR}/e_smoke.cpp)
     add_executable(example_xpbd_smoke ${EXAMPLES_DIR}/e_smoke.cpp)
     _hina_setup_example(example_xpbd_smoke)
 endif()
+
+if (EXISTS ${EXAMPLES_DIR}/e_flag.cpp)
+    add_executable(example_xpbd_flag ${EXAMPLES_DIR}/e_flag.cpp)
+    _hina_setup_example(example_xpbd_flag)
+endif()
