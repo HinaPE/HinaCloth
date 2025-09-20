@@ -19,7 +19,7 @@ namespace sim {
         return std::acos(c);
     }
 
-    void kernel_bending_project(const unsigned int* quads, size_t m, SoAView3& pos, const float* target, int iterations, float /*alpha*/, float /*dt*/) {
+    void kernel_bending_project(const unsigned int* quads, size_t m, SoAView3& pos, const float* target, const float* inv_mass, int iterations, float /*alpha*/, float /*dt*/) {
         if (!quads || !target || m == 0) return;
         const float k = 0.1f; // simple stiffness per iteration
         for (int it = 0; it < iterations; ++it) {
@@ -37,8 +37,10 @@ namespace sim {
                 if (n1l > 1e-12f) { n1x/=n1l; n1y/=n1l; n1z/=n1l; }
                 if (n2l > 1e-12f) { n2x/=n2l; n2y/=n2l; n2z/=n2l; }
                 float s = -k * err;
-                pos.x[i2] += s * n1x; pos.y[i2] += s * n1y; pos.z[i2] += s * n1z;
-                pos.x[i3] -= s * n2x; pos.y[i3] -= s * n2y; pos.z[i3] -= s * n2z;
+                float w2 = inv_mass ? inv_mass[i2] : 1.0f;
+                float w3 = inv_mass ? inv_mass[i3] : 1.0f;
+                if (w2 > 0.0f) { pos.x[i2] += s * w2 * n1x; pos.y[i2] += s * w2 * n1y; pos.z[i2] += s * w2 * n1z; }
+                if (w3 > 0.0f) { pos.x[i3] -= s * w3 * n2x; pos.y[i3] -= s * w3 * n2y; pos.z[i3] -= s * w3 * n2z; }
             }
         }
     }

@@ -23,6 +23,7 @@ namespace sim {
                                       const float* rest,
                                       const float* inv_mass,
                                       float* lambda_edge,
+                                      const float* alpha_edge,
                                       int iterations,
                                       float alpha,
                                       float dt) {
@@ -54,9 +55,10 @@ namespace sim {
                 __m256 C       = _mm256_sub_ps(len, _mm256_loadu_ps(rest + e));
                 __m256 wi = inv_mass ? _mm256_i32gather_ps(inv_mass, ia, 4) : _mm256_set1_ps(1.0f);
                 __m256 wj = inv_mass ? _mm256_i32gather_ps(inv_mass, ib, 4) : _mm256_set1_ps(1.0f);
-                __m256 denom = _mm256_add_ps(_mm256_add_ps(wi, wj), _mm256_set1_ps(alpha));
+                __m256 a_e = alpha_edge ? _mm256_loadu_ps(alpha_edge + e) : _mm256_set1_ps(alpha);
+                __m256 denom = _mm256_add_ps(_mm256_add_ps(wi, wj), a_e);
                 __m256 lambda_prev = lambda_edge ? _mm256_loadu_ps(lambda_edge + e) : _mm256_set1_ps(0.0f);
-                __m256 dlambda = _mm256_div_ps(_mm256_sub_ps(_mm256_set1_ps(0.0f), _mm256_add_ps(C, _mm256_mul_ps(_mm256_set1_ps(alpha), lambda_prev))), denom);
+                __m256 dlambda = _mm256_div_ps(_mm256_sub_ps(_mm256_set1_ps(0.0f), _mm256_add_ps(C, _mm256_mul_ps(a_e, lambda_prev))), denom);
                 __m256 s = _mm256_mul_ps(dlambda, inv_len);
                 __m256 cx = _mm256_mul_ps(s, dx);
                 __m256 cy = _mm256_mul_ps(s, dy);
@@ -78,7 +80,7 @@ namespace sim {
             // tail
             if (e < m) {
                 SoAView3 v = pos;
-                kernel_distance_project(edges + 2*e, m - e, v, rest + e, inv_mass, lambda_edge ? (lambda_edge + e) : nullptr, 1, alpha, dt);
+                kernel_distance_project(edges + 2*e, m - e, v, rest + e, inv_mass, lambda_edge ? (lambda_edge + e) : nullptr, alpha_edge ? (alpha_edge + e) : nullptr, 1, alpha, dt);
             }
         }
     }
@@ -88,11 +90,12 @@ namespace sim {
                                       const float* rest,
                                       const float* inv_mass,
                                       float* lambda_edge,
+                                      const float* alpha_edge,
                                       int iterations,
                                       float alpha,
                                       float dt) {
         // Fallback to scalar when AVX2 not available at compile-time
-        kernel_distance_project(edges, m, pos, rest, inv_mass, lambda_edge, iterations, alpha, dt);
+        kernel_distance_project(edges, m, pos, rest, inv_mass, lambda_edge, alpha_edge, iterations, alpha, dt);
     }
 #endif
 }

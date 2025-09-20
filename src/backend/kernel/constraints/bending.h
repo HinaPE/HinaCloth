@@ -4,6 +4,6 @@
 
 namespace sim {
     struct SoAView3;
-    void kernel_bending_project(const unsigned int* quads, size_t m, SoAView3& pos, const float* target, int iterations, float alpha, float dt);
+    void kernel_bending_project(const unsigned int* quads, size_t m, SoAView3& pos, const float* target, const float* inv_mass, int iterations, float alpha, float dt);
 }
 #endif //HINACLOTH_BENDING_H

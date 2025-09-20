@@ -37,6 +37,7 @@ namespace sim {
                                        const float* rest,
                                        const float* inv_mass,
                                        float* lambda_edge,
+                                       const float* alpha_edge,
                                        int iterations,
                                        float alpha,
                                        float /*dt*/) {
@@ -83,9 +84,10 @@ namespace sim {
                 __m256 C       = _mm256_sub_ps(len, _mm256_loadu_ps(rest + e));
                 __m256 wi = inv_mass ? _mm256_i32gather_ps(inv_mass, _mm256_load_si256((const __m256i*)a_idx), 4) : _mm256_set1_ps(1.0f);
                 __m256 wj = inv_mass ? _mm256_i32gather_ps(inv_mass, _mm256_load_si256((const __m256i*)b_idx), 4) : _mm256_set1_ps(1.0f);
-                __m256 denom = _mm256_add_ps(_mm256_add_ps(wi, wj), _mm256_set1_ps(alpha));
+                __m256 a_e = alpha_edge ? _mm256_loadu_ps(alpha_edge + e) : _mm256_set1_ps(alpha);
+                __m256 denom = _mm256_add_ps(_mm256_add_ps(wi, wj), a_e);
                 __m256 lambda_prev = lambda_edge ? _mm256_loadu_ps(lambda_edge + e) : _mm256_set1_ps(0.0f);
-                __m256 dlambda = _mm256_div_ps(_mm256_sub_ps(_mm256_set1_ps(0.0f), _mm256_add_ps(C, _mm256_mul_ps(_mm256_set1_ps(alpha), lambda_prev))), denom);
+                __m256 dlambda = _mm256_div_ps(_mm256_sub_ps(_mm256_set1_ps(0.0f), _mm256_add_ps(C, _mm256_mul_ps(a_e, lambda_prev))), denom);
                 __m256 s = _mm256_mul_ps(dlambda, inv_len);
                 __m256 cx = _mm256_mul_ps(s, dx);
                 __m256 cy = _mm256_mul_ps(s, dy);
@@ -110,16 +112,17 @@ namespace sim {
             // tail scalar
             for (; e < m; ++e) {
                 uint32_t a = edges[2*e+0], b = edges[2*e+1];
-                project_edge_scalar_aosoa(a, b, pos_blk, rest[e], inv_mass, lambda_edge ? (lambda_edge + e) : nullptr, alpha);
+                float a_e = alpha_edge ? alpha_edge[e] : alpha;
+                project_edge_scalar_aosoa(a, b, pos_blk, rest[e], inv_mass, lambda_edge ? (lambda_edge + e) : nullptr, a_e);
             }
         #else
             for (int it2 = 0; it2 < 1; ++it2) (void)it2; // keep structure similar
             for (std::size_t e = 0; e < m; ++e) {
                 uint32_t a = edges[2*e+0], b = edges[2*e+1];
-                project_edge_scalar_aosoa(a, b, pos_blk, rest[e], inv_mass, lambda_edge ? (lambda_edge + e) : nullptr, alpha);
+                float a_e = alpha_edge ? alpha_edge[e] : alpha;
+                project_edge_scalar_aosoa(a, b, pos_blk, rest[e], inv_mass, lambda_edge ? (lambda_edge + e) : nullptr, a_e);
             }
         #endif
         }
     }
 }
-

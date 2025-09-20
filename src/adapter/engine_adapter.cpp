@@ -132,6 +132,8 @@ namespace sim {
         if (e->data) {
             std::size_t ecount = e->model ? (e->model->edges.size() / 2) : 0u;
             e->data->lambda_edge.assign(ecount, 0.0f);
+            e->data->distance_alpha_edge.assign(ecount, 0.0f);
+            e->data->distance_compliance_edge.assign(ecount, 0.0f);
             // Ensure AoSoA buffer consistent with layout
             if (e->data->exec_layout_blocked) {
                 unsigned int blk = e->data->layout_block_size > 0 ? e->data->layout_block_size : (e->model && e->model->layout_block_size ? e->model->layout_block_size : 8u);

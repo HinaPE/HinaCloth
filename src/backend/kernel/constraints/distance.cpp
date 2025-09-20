@@ -9,6 +9,7 @@ namespace sim {
                                  const float* rest,
                                  const float* inv_mass,
                                  float* lambda_edge,
+                                 const float* alpha_edge,
                                  int iterations,
                                  float alpha,
                                  float /*dt*/) {
@@ -27,10 +28,11 @@ namespace sim {
                 float C = len - R[e];
                 float wi = inv_mass ? W[a] : 1.0f;
                 float wj = inv_mass ? W[b] : 1.0f;
-                float denom = wi + wj + alpha;
+                float a_e = alpha_edge ? alpha_edge[e] : alpha;
+                float denom = wi + wj + a_e;
                 if (denom <= 0.0f) continue;
                 float lambda_prev = lambda_edge ? L[e] : 0.0f;
-                float dlambda = -(C + alpha * lambda_prev) / denom;
+                float dlambda = -(C + a_e * lambda_prev) / denom;
                 float s = dlambda / len;
                 float cx = s * dx, cy = s * dy, cz = s * dz;
                 // Apply weighted corrections

@@ -16,6 +16,8 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 option(HINACLOTH_WARN_AS_ERROR "Treat compiler warnings as errors" ON)
 # Build examples
 option(HINACLOTH_BUILD_EXAMPLES "Build example executables" ON)
+# Toggle TBB integration
+option(HINACLOTH_WITH_TBB "Enable oneTBB integration" ON)
 
 # =============================
 # Helper: warnings/optimization per compiler
@@ -57,7 +59,6 @@ target_include_directories(libhinacloth PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_features(libhinacloth PUBLIC cxx_std_23)
 # Apply warnings/opt flags
 hinacloth_apply_common_warnings(libhinacloth)
-hinacloth_apply_release_opts(libhinacloth)
 
 # Optional: enable AVX2 optimizations in Release if available
 set(HINA_HAVE_AVX2 FALSE)
@@ -87,11 +88,16 @@ if (HINA_HAVE_AVX2)
 endif()
 
 # =============================
-# oneTBB setup (optional but enabled by project)
+# oneTBB setup (optional)
 # =============================
-include(cmake/setup_tbb.cmake)
-use_tbb(libhinacloth)
-target_compile_definitions(libhinacloth PUBLIC HINACLOTH_HAVE_TBB=1)
+if (HINACLOTH_WITH_TBB)
+    include(cmake/setup_tbb.cmake)
+    use_tbb(libhinacloth)
+    target_compile_definitions(libhinacloth PUBLIC HINACLOTH_HAVE_TBB=1)
+endif()
+
+# Apply release opts after potentially adding arch flags
+hinacloth_apply_release_opts(libhinacloth)
 
 # =============================
 # Examples
@@ -105,7 +111,10 @@ if (HINACLOTH_BUILD_EXAMPLES)
             target_compile_features(${target} PRIVATE cxx_std_23)
             hinacloth_apply_common_warnings(${target})
             hinacloth_apply_release_opts(${target})
-            use_tbb(${target})
+            if (HINACLOTH_WITH_TBB)
+                use_tbb(${target})
+                target_compile_definitions(${target} PRIVATE HINACLOTH_HAVE_TBB=1)
+            endif()
             if (HINA_HAVE_AVX2)
                 target_compile_definitions(${target} PRIVATE HINACLOTH_HAVE_AVX2=1)
             endif()
@@ -135,5 +144,10 @@ if (HINACLOTH_BUILD_EXAMPLES)
     if (EXISTS ${EXAMPLES_DIR}/e_bench.cpp)
         add_executable(example_xpbd_bench ${EXAMPLES_DIR}/e_bench.cpp)
         _hina_setup_example(example_xpbd_bench)
+    endif()
+
+    if (EXISTS ${EXAMPLES_DIR}/e_pin.cpp)
+        add_executable(example_xpbd_pin ${EXAMPLES_DIR}/e_pin.cpp)
+        _hina_setup_example(example_xpbd_pin)
     endif()
 endif()

@@ -10,6 +10,6 @@ namespace sim {
                                 int iterations,
                                 float alpha,
                                 float dt) {
-        kernel_distance_project(edges, m, pos, rest, inv_mass, lambda_edge, iterations, alpha, dt);
+        kernel_distance_project(edges, m, pos, rest, inv_mass, lambda_edge, /*alpha_edge*/nullptr, iterations, alpha, dt);
     }
 }

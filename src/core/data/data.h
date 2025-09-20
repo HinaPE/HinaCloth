@@ -26,7 +26,10 @@ namespace sim {
         float gx;
         float gy;
         float gz;
+        // Distance compliance: global and optional per-edge (compliance, not alpha). Alpha is computed per substep.
         float distance_compliance; // compliance for distance constraints (0 => PBD)
+        std::vector<float> distance_compliance_edge; // optional per-edge compliance
+        std::vector<float> distance_alpha_edge;      // per-edge alpha computed for current substep (size = edge_count)
         // Solve parameters (policy defaults, overridable at runtime)
         int   solve_substeps;
         int   solve_iterations;

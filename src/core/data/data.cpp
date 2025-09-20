@@ -76,6 +76,8 @@ namespace sim {
         d->inv_mass.assign(npos, 1.0f);
         size_t ecount = m.edges.size() / 2;
         d->lambda_edge.assign(ecount, 0.0f);
+        d->distance_compliance_edge.assign(ecount, 0.0f);
+        d->distance_alpha_edge.assign(ecount, 0.0f);
         if (d->exec_layout_blocked) {
             size_t nb = (npos + (size_t)blk - 1) / (size_t)blk;
             d->pos_aosoa.assign(3u * (size_t)blk * nb, 0.0f);
@@ -140,6 +142,11 @@ namespace sim {
                             d.attach_tx[j] = v3[0]; d.attach_ty[j] = v3[1]; d.attach_tz[j] = v3[2];
                         }
                     }
+                } else if (field && std::strcmp(field, "distance_compliance_edge") == 0) {
+                    if (start < d.distance_compliance_edge.size()) {
+                        uint32_t end = (uint32_t) std::min<size_t>(d.distance_compliance_edge.size(), (size_t) start + (size_t) cnt);
+                        for (uint32_t j = start; j < end; ++j) d.distance_compliance_edge[j] = v3[0];
+                    }
                 }
             }
         }
@@ -179,6 +186,9 @@ namespace sim {
         d->lambda_edge = oldd.lambda_edge; // will be resized to model in adapter after rebuild
         d->gx = oldd.gx; d->gy = oldd.gy; d->gz = oldd.gz;
         d->distance_compliance = oldd.distance_compliance;
+        // per-edge compliance/alpha will be resized to new edge count after rebuild
+        d->distance_compliance_edge.clear();
+        d->distance_alpha_edge.clear();
         d->solve_substeps   = oldd.solve_substeps;
         d->solve_iterations = oldd.solve_iterations;
         d->solve_damping    = oldd.solve_damping;

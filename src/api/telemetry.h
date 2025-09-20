@@ -12,6 +12,8 @@ namespace sim
         double   avg_rebuild_ms;    // exponential moving average or simple average of rebuild durations
         uint64_t commands_applied;
         uint64_t structural_rebuilds;
+        int      solve_substeps;    // substeps used in the last frame
+        int      solve_iterations;  // iterations per substep used in the last frame
     };
 }
 

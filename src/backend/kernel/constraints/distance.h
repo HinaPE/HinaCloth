@@ -10,6 +10,7 @@ namespace sim {
                                  const float* rest,
                                  const float* inv_mass,
                                  float* lambda_edge,
+                                 const float* alpha_edge, // optional per-edge alpha (nullptr => use scalar alpha)
                                  int iterations,
                                  float alpha,
                                  float dt);

@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <cstring>
 #include <algorithm>
+#include <vector>
+#include <unordered_set>
 
 namespace sim {
     static const FieldView* find_field_exact(const StateInit& s, const char* name) {
@@ -13,6 +15,17 @@ namespace sim {
             if (auto* f = find_field_exact(s, names[k])) return f;
         }
         return nullptr;
+    }
+
+    static bool any_nan_vec3(const FieldView* f) {
+        if (!f || !f->data) return false;
+        const char* p = (const char*) f->data;
+        for (size_t i = 0; i < f->count; ++i) {
+            const float* v = (const float*) p;
+            if (!(v[0] == v[0]) || !(v[1] == v[1]) || !(v[2] == v[2])) return true; // NaN check
+            p += f->stride_bytes;
+        }
+        return false;
     }
 
     static bool check_state(const StateInit& s, const TopologyIn& topo, ValidateLevel lvl) {
@@ -32,12 +45,14 @@ namespace sim {
         if (!pos) return false;
         if (pos->components != 3) return false;
         if (pos->count != topo.node_count) return false;
+        if (any_nan_vec3(pos)) return false;
         // velocity optional; if present must match (accept aliases)
         const char* vel_aliases[] = {"velocity", "vel", "velocities"};
         auto vel = find_field_any(s, vel_aliases, 3);
         if (vel) {
             if (vel->components != 3) return false;
             if (vel->count != topo.node_count) return false;
+            if (any_nan_vec3(vel)) return false;
         }
         return true;
     }
@@ -49,8 +64,27 @@ namespace sim {
             auto& r = t.relations[i];
             if (r.tag && std::strcmp(r.tag, "edges") == 0) {
                 if (r.arity != 2) return false;
+                // out-of-range check
+                bool bad = false;
+                for (size_t k = 0; k < r.count; ++k) {
+                    uint32_t a = r.indices[2*k+0], b = r.indices[2*k+1];
+                    if (a >= t.node_count || b >= t.node_count) { bad = true; break; }
+                }
+                if (bad && lvl == ValidateLevel::Strict) return false;
+                // duplicate detection (unordered_set of 64-bit key)
+                std::unordered_set<uint64_t> seen;
+                seen.reserve(r.count * 2 + 1);
+                for (size_t k = 0; k < r.count; ++k) {
+                    uint32_t a = r.indices[2*k+0], b = r.indices[2*k+1];
+                    uint32_t lo = std::min(a,b), hi = std::max(a,b);
+                    uint64_t key = ((uint64_t)hi << 32) | (uint64_t)lo;
+                    if (!seen.insert(key).second) {
+                        if (lvl == ValidateLevel::Strict) return false;
+                    }
+                }
             } else if (r.tag && std::strcmp(r.tag, "bend_pairs") == 0) {
                 if (r.arity != 4) return false;
+                // optional: skip deep validation for now
             } else {
                 // unknown relation tag: strict fails, tolerant ignores
                 if (lvl == ValidateLevel::Strict) return false;

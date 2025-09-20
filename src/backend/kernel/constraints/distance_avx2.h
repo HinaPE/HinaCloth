@@ -11,10 +11,10 @@ namespace sim {
                                       const float* rest,
                                       const float* inv_mass,
                                       float* lambda_edge,
+                                      const float* alpha_edge,
                                       int iterations,
                                       float alpha,
                                       float dt);
 }
 
 #endif //HINACLOTH_DISTANCE_AVX2_H
-
