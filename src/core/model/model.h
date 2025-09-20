@@ -6,8 +6,11 @@
 namespace sim {
     struct Model {
         uint32_t node_count;
-        std::vector<uint32_t> edges;
-        std::vector<float> rest;
+        std::vector<uint32_t> edges; // pairs, reordered by island
+        std::vector<float> rest;     // reordered by island
+        // Islanding metadata
+        uint32_t island_count{1};
+        std::vector<uint32_t> island_offsets; // size = island_count+1, edge counts prefix sum
     };
 
     void core_model_destroy(Model* m);

@@ -36,6 +36,14 @@ else()
 endif()
 
 # ----------------------------------------------------------------------------
+# oneTBB: enabled via helper (Stage 2)
+# ----------------------------------------------------------------------------
+include(cmake/setup_tbb.cmake)
+use_tbb(libhinacloth)
+# Enable TBB code paths in runtime
+target_compile_definitions(libhinacloth PUBLIC HINACLOTH_HAVE_TBB=1)
+
+# ----------------------------------------------------------------------------
 # Examples (no external visualizer dependency)
 # ----------------------------------------------------------------------------
 set(EXAMPLES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/examples)
@@ -50,6 +58,8 @@ function(_hina_setup_example target)
         else()
             target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
         endif()
+        # Ensure oneTBB runtime DLLs are copied alongside executables on Windows
+        use_tbb(${target})
     endif()
 endfunction()
 

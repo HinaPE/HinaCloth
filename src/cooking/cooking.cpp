@@ -5,6 +5,7 @@
 #include <new>
 #include <vector>
 #include <cmath>
+#include <queue>
 
 namespace sim {
     static const void* find_field(const StateInit& st, const char* name, size_t comps, size_t& count, size_t& stride) {
@@ -31,6 +32,66 @@ namespace sim {
             c[i]           = v[2];
             p += stride;
         }
+    }
+
+    static void compute_islands_and_reorder(Model& m) {
+        const uint32_t n = m.node_count;
+        const std::size_t mcnt = m.edges.size() / 2;
+        // Build adjacency
+        std::vector<std::vector<uint32_t>> adj(n);
+        adj.reserve(n);
+        for (std::size_t e = 0; e < mcnt; ++e) {
+            uint32_t a = m.edges[2*e+0];
+            uint32_t b = m.edges[2*e+1];
+            if (a < n && b < n) { adj[a].push_back(b); adj[b].push_back(a); }
+        }
+        // BFS to find comps
+        std::vector<int> comp(n, -1);
+        int cc = 0;
+        std::queue<uint32_t> q;
+        for (uint32_t v = 0; v < n; ++v) {
+            if (comp[v] != -1) continue;
+            comp[v] = cc;
+            q.push(v);
+            while (!q.empty()) {
+                auto u = q.front(); q.pop();
+                for (auto w : adj[u]) {
+                    if (comp[w] == -1) { comp[w] = cc; q.push(w); }
+                }
+            }
+            cc++;
+        }
+        // Bucket edges by component
+        std::vector<std::vector<uint32_t>> edge_pairs(cc); // store pairs flatten later
+        std::vector<std::vector<float>>    edge_rest(cc);
+        for (std::size_t e = 0; e < mcnt; ++e) {
+            uint32_t a = m.edges[2*e+0];
+            uint32_t b = m.edges[2*e+1];
+            int cida = (a < n) ? comp[a] : -1;
+            int cidb = (b < n) ? comp[b] : -1;
+            int cid  = (cida == cidb && cida >= 0) ? cida : -1;
+            if (cid < 0) cid = 0; // fallback bucket
+            edge_pairs[cid].push_back(a);
+            edge_pairs[cid].push_back(b);
+            if (e < m.rest.size()) edge_rest[cid].push_back(m.rest[e]);
+            else edge_rest[cid].push_back(0.0f);
+        }
+        // Reorder edges/rest and fill offsets
+        m.island_count = (uint32_t) cc;
+        m.island_offsets.assign(cc + 1, 0);
+        std::size_t offset = 0;
+        std::vector<uint32_t> new_edges; new_edges.reserve(m.edges.size());
+        std::vector<float> new_rest; new_rest.reserve(m.rest.size());
+        for (int cidx = 0; cidx < cc; ++cidx) {
+            m.island_offsets[cidx] = (uint32_t) (new_rest.size());
+            // append pairs/rest
+            new_edges.insert(new_edges.end(), edge_pairs[cidx].begin(), edge_pairs[cidx].end());
+            new_rest.insert(new_rest.end(), edge_rest[cidx].begin(), edge_rest[cidx].end());
+        }
+        m.island_offsets[cc] = (uint32_t) (new_rest.size());
+        m.edges.swap(new_edges);
+        m.rest.swap(new_rest);
+        (void) offset;
     }
 
     bool cooking_build_model(const BuildDesc& in, Model*& out) {
@@ -65,6 +126,8 @@ namespace sim {
             float l    = std::sqrt(dx * dx + dy * dy + dz * dz);
             m->rest[e] = l;
         }
+        // Stage 2: compute islands & reorder constraints by island
+        compute_islands_and_reorder(*m);
         out = m;
         return true;
     }
@@ -75,6 +138,8 @@ namespace sim {
         m->node_count = cur.node_count;
         m->edges      = cur.edges;
         m->rest       = cur.rest;
+        m->island_count   = cur.island_count;
+        m->island_offsets = cur.island_offsets;
         RemapPlan* rp = new(std::nothrow) RemapPlan();
         if (!rp) {
             delete m;
