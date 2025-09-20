@@ -72,8 +72,8 @@ namespace sim {
                     uint32_t a = a_idx[k], b = b_idx[k];
                     float wi_k = wi_s[k], wj_k = wj_s[k];
                     float cxk = cx_s[k], cyk = cy_s[k], czk = cz_s[k];
-                    if (a < pos.n && wi_k > 0.0f) { pos.x[a] += wi_k * cxk; pos.y[a] += wi_k * cyk; pos.z[a] += wi_k * czk; }
-                    if (b < pos.n && wj_k > 0.0f) { pos.x[b] -= wj_k * cxk; pos.y[b] -= wj_k * cyk; pos.z[b] -= wj_k * czk; }
+                    if (a < pos.n && wi_k > 0.0f) { pos.x[a] -= wi_k * cxk; pos.y[a] -= wi_k * cyk; pos.z[a] -= wi_k * czk; }
+                    if (b < pos.n && wj_k > 0.0f) { pos.x[b] += wj_k * cxk; pos.y[b] += wj_k * cyk; pos.z[b] += wj_k * czk; }
                     if (lambda_edge) lambda_edge[e + k] = lnew[k];
                 }
             }

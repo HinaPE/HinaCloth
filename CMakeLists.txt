@@ -252,3 +252,25 @@ if (HINA_SPV_FILES)
     add_custom_target(hinacloth_example_shaders ALL DEPENDS ${HINA_SPV_FILES})
 endif()
 
+# =============================
+# Unit tests6
+# =============================
+enable_testing()
+file(GLOB_RECURSE HINACLOTH_TESTS_SRC
+    "${CMAKE_CURRENT_SOURCE_DIR}/test/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test/*.h")
+if (HINACLOTH_TESTS_SRC)
+    add_executable(hinacloth_tests ${HINACLOTH_TESTS_SRC})
+    target_link_libraries(hinacloth_tests PRIVATE libhinacloth)
+    target_include_directories(hinacloth_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    hinacloth_apply_common_warnings(hinacloth_tests)
+    hinacloth_apply_release_opts(hinacloth_tests)
+    if (HINACLOTH_WITH_TBB)
+        use_tbb(hinacloth_tests)
+        target_compile_definitions(hinacloth_tests PRIVATE HINACLOTH_HAVE_TBB=1)
+    endif()
+    if (HINA_HAVE_AVX2)
+        target_compile_definitions(hinacloth_tests PRIVATE HINACLOTH_HAVE_AVX2=1)
+    endif()
+    add_test(NAME hinacloth_tests COMMAND hinacloth_tests)
+endif()

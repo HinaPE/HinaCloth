@@ -27,8 +27,8 @@ namespace sim {
         float dlambda = -(C + alpha * lambda_prev) / denom;
         float s = dlambda / len;
         float cx = s * dx, cy = s * dy, cz = s * dz;
-        if (wi > 0.0f) storage_aosoa_axpy3(pos, ai, wi * cx, wi * cy, wi * cz);
-        if (wj > 0.0f) storage_aosoa_axpy3(pos, bi, -wj * cx, -wj * cy, -wj * cz);
+        if (wi > 0.0f) storage_aosoa_axpy3(pos, ai, -wi * cx, -wi * cy, -wi * cz);
+        if (wj > 0.0f) storage_aosoa_axpy3(pos, bi, +wj * cx, +wj * cy, +wj * cz);
         if (lambda) *lambda = lambda_prev + dlambda;
     }
 
@@ -104,8 +104,8 @@ namespace sim {
                     uint32_t a = a_idx[k], b = b_idx[k];
                     float wi_k = wi_s[k], wj_k = wj_s[k];
                     float cxk = cx_s[k], cyk = cy_s[k], czk = cz_s[k];
-                    if (a < pos_blk.n && wi_k > 0.0f) storage_aosoa_axpy3(pos_blk, a, wi_k * cxk, wi_k * cyk, wi_k * czk);
-                    if (b < pos_blk.n && wj_k > 0.0f) storage_aosoa_axpy3(pos_blk, b, -wj_k * cxk, -wj_k * cyk, -wj_k * czk);
+                    if (a < pos_blk.n && wi_k > 0.0f) storage_aosoa_axpy3(pos_blk, a, -wi_k * cxk, -wi_k * cyk, -wi_k * czk);
+                    if (b < pos_blk.n && wj_k > 0.0f) storage_aosoa_axpy3(pos_blk, b, +wj_k * cxk, +wj_k * cyk, +wj_k * czk);
                     if (lambda_edge) lambda_edge[e + k] = lnew[k];
                 }
             }

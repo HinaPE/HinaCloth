@@ -77,7 +77,7 @@ public:
         const char* tags[] = {"edges"}; FieldUse uses[] = {{"position", true}};
         OperatorDecl op{"distance", tags, 1, uses, 1, OpStage::Solve, true}; OperatorsDecl ops{&op, 1};
         Param gy{"gravity_y", ParamType::F32, {.f32=-9.8f}}; Parameters params{&gy, 1};
-        Policy pol{{DataLayout::Auto, Backend::Auto, -1, true, true}, {2, 10, 0.02f, TimeStepper::Symplectic}};
+        Policy pol{{DataLayout::Auto, Backend::Native, -1, true, true}, {2, 10, 0.02f, TimeStepper::Symplectic}};
         SpaceDesc sp{SpaceType::Lagrangian, 1, 0}; EventsScript ev{nullptr, 0};
         BuildDesc bd{st, params, topo, pol, sp, ops, ev, ValidateLevel::Strict, {true, 8}};
         auto r = create(bd); solver_ = (r.status==Status::Ok) ? r.value : nullptr;

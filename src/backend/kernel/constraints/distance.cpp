@@ -35,16 +35,16 @@ namespace sim {
                 float dlambda = -(C + a_e * lambda_prev) / denom;
                 float s = dlambda / len;
                 float cx = s * dx, cy = s * dy, cz = s * dz;
-                // Apply weighted corrections
+                // Apply weighted corrections with correct gradient signs: g_a=-n, g_b=+n
                 if (wi > 0.0f) {
-                    pos.x[a] += wi * cx;
-                    pos.y[a] += wi * cy;
-                    pos.z[a] += wi * cz;
+                    pos.x[a] -= wi * cx;
+                    pos.y[a] -= wi * cy;
+                    pos.z[a] -= wi * cz;
                 }
                 if (wj > 0.0f) {
-                    pos.x[b] -= wj * cx;
-                    pos.y[b] -= wj * cy;
-                    pos.z[b] -= wj * cz;
+                    pos.x[b] += wj * cx;
+                    pos.y[b] += wj * cy;
+                    pos.z[b] += wj * cz;
                 }
                 if (lambda_edge) L[e] = lambda_prev + dlambda;
             }
