@@ -1,158 +1,166 @@
-# XPBD Cloth Engine Roadmap
+# HinaCloth Roadmap（重写版，2025-09-20）
 
-目标：在现有 MVP 骨架上，分阶段落地“4+3 + 两圈外环”设计，达成正确性、性能、确定性与可扩展性的平衡。每个阶段给出交付物与验收标准，便于回归与推进。
+本路线图基于对 README 设计理念与 src 代码现状的全面走查（runtime、backend、cooking、core、shell、adapter、api）。目标是在不破坏对外 API 的前提下，按“4+3 + 两圈外环”的蓝图，循序推进正确性、并行性与性能。
 
-注意：
-- 默认优先 CPU/SoA → AoSoA/AVX2 → TBB 并行；GPU 留作后续可选路线。
-- 每阶段结束需跑最小基准与确定性回归；CI 收敛后再进入下一阶段。
+—
 
-
-阶段 0：基线稳固与最小可用
-- 目的：保证当前 MVP 可持续演进，基础设施就绪。
-- 任务：
-  - 构建脚本最小整理：Debug/Release 配置与 warnings 设置；打开常见告警；禁用 MSVC 不必要 CRT 安全告警。
-  - examples 拆分：保留 e_min，并新增 e_smoke（仅 create/step/destroy），作为冒烟测试。
-  - 引入最小单元测试骨架（可选 doctest/catch2，或自写轻量测试宏）。
-- 交付物：
-  - Windows 下 Release/Debug 可编译，examples 运行通过。
-  - 一条 CI 脚本雏形（本地脚本），包含构建+冒烟+示例 run。
-- 验收：构建时间 < 5 分钟；e_min 输出 telemetry 不崩溃。
-
-
-阶段 1：XPBD 正确性基线（Distance + Overrides）
-- 目的：从“朴素投影”升级到“真正的 XPBD 距离约束”，并完善运行期覆盖策略。
-- 任务：
-  - Data：
-    - 新增 inv_mass（默认为 1，支持通过 Parameters 注入质量/固定点：pin→inv_mass=0）。
-    - 新增 λ 缓冲（每条边 1 个），帧内累积；新增 per-constraint 有效标志（可选）。
-  - Cooking：
-    - Precompute：为每条边计算权重 w_i、w_j 与 alpha = compliance/(dt^2) 的常量位（compliance 可作为参数，默认 0）。
-    - 校验：检测 edges 越界、重复边（可选哈希/排序去重，先告警）。
-  - Kernels（distance）：
-    - 实现 XPBD 公式：Δx = - (w_i ∇C_i + w_j ∇C_j) * (C + alpha*λ_prev)/(Σw|∇C|^2 + alpha)，更新 λ。
-    - 支持 inv_mass=0 的 pin；支持 iterations/alpha；允许 dt 传入。
-  - Runtime：
-    - 实现 substeps × iterations；添加 velocity damping（Policy.solve.damping）。
-    - SolveOverrides：可覆盖 substeps 与 iterations（优先级高于 Policy）。
-    - Telemetry：记录 step_ms（粗略）、迭代次数；预留残差（可先返回 0）。
-  - Shell：扩展小命令 SetParam 支持 iterations/substeps/damping；支持 pin/unpin 单点（通过 SetFieldRegion 或专用命令）。
-- 交付物：
-  - e_min 下布料自由下垂正确（顶边若未 pin 会整体下降）。
-  - 新增 e_pin：固定顶边两列点，观测稳定下垂。
-- 验收：
-  - 位置变化随迭代数增加而收敛；inv_mass=0 的点位置保持；修改 gravity/iterations/substeps 能即时生效。
-
-
-阶段 2：PhaseGraph + Islanding + 并行调度雏形
-- 目的：将“算子图”固化为可并行计划，引入确定性并行的基础设施。
-- 任务：
-  - Cooking：
-    - PhaseGraph：解析 OperatorsDecl，识别读/写字段与依赖关系；对 edges 约束图进行颜色分组（无写冲突批次）。
-    - Islanding：基于拓扑连通性与 pin 划分岛；产出 island 索引与批次表。
-  - Scheduler：
-    - seq：按 island→phase→batch 顺序调度，作为确定性基线。
-    - tbb：并行执行不同 island；batch 内可按固定分块大小并行；加入 barrier 以维持阶段顺序。
-    - 确定性：固定任务切分大小与排序键，避免竞态。
-  - Runtime：
-    - 跑 PhaseGraph：多算子（先仅 distance），留接口给 bending/attachment。
-  - Telemetry：
-    - 记录 per-phase 耗时与岛屿规模分布（粗略统计）。
-- 交付物：
-  - PhaseGraph/Islanding 数据结构（model 内可序列化）。
-  - tbb 路径对 e_pin 加速明显（>1.5×，取决于核数与规模）。
-- 验收：
-  - 开关 Backend=Seq/TBB 结果 bitwise 一致（同编译/ISA 下），或至少在 Level 1 近似一致并稳定（见 README“确定性分级”）。
-
-
-阶段 3：LayoutPlan + AoSoA + AVX2（性能里程碑）
-- 目的：布局驱动性能，完成 SoA→AoSoA 的数据重排与 AVX2 向量核。
-- 任务：
-  - Cooking：
-    - LayoutPlan：选择块大小（如 8/16），产出从作者编号到内部编号的重排索引；预分配对齐缓冲。
-  - Storage：
-    - AoSoA 视图与绑定函数；提供顺序遍历与块内向量化友好接口。
+## 现状快照（MVP 已具备的能力）
+- API/Shell
+  - `create/step/push_command/flush/telemetry/query_chosen` 全链可用；按命令分相位（BeforeFrame/AfterSolve）。
+  - 轻量校验（字段尺寸/别名）、翻译/打包占位；模型缓存支持“内存级命中”（无落盘）。
+- Cooking/Model
+  - 由 `edges` 关系生成 rest-length；基于连通性做岛屿划分，并将 edges/rest 以岛为粒度重排；bend_pairs 支持与弯曲目标角预计算。
+  - `Model` 含节点数、edges/rest、island_offsets、node_remap(恒等)、layout_block_size。
+- Data
+  - SoA：x/y/z，vx/vy/vz，预测位 px/py/pz。
+  - XPBD 关键：inv_mass（pin=0）、per-edge λ（lambda_edge）。
+  - Solve/Exec：substeps、iterations、damping；后端/布局（SoA/AoSoA）、AVX2/TBB 开关；AoSoA 缓冲与 block_size。
+  - Operator 数据：Attachment 权重与目标、使能位；Bending 使能位。
+- Backends
+  - Storage：SoA 视图、AoSoA 打包/解包与读写/Axpy。
   - Kernels：
-    - distance AVX2 实现（加载/归一化/更新），与 SoA/AoSoA 两套路径统一签名；回退到标量。
-  - Remap：
-    - rebuild 时支持从旧布局到新布局的数据迁移（positions/velocities/λ 等）。
-  - Registry：
-    - 结合 Policy 与硬件能力（CPUID）选择 SoA/AoSoA × Native/AVX2。
-- 交付物：
-  - 中等规模网格（~50k 约束）在 Release 下获得显著加速（>2× 对比 SoA 标量）。
-- 验收：
-  - 性能基准曲线：迭代固定下，帧时随约束数线性增长；AVX2 路径对齐正常（无越界/未对齐访存报错）。
+    - Distance：标量 SoA（XPBD 公式含 α 与 λ）、AVX2 SoA、AoSoA（含 AVX2 gather 与尾部标量）。
+    - Attachment：预测位预拉向目标（权重、pin 跳过）。
+    - Bending：简化对偶投影（非 XPBD，demo 级）。
+  - Scheduler：`seq` 基线；`tbb` 文件存在但未实现细粒度调度（runtime 中提供按岛并行的粗粒度路径）。
+  - Registry：结合 Policy 与 CPUID 选择 Backend/Layout，并对 AVX2 默认偏好 Blocked。
+- Runtime
+  - 完整子步循环：积分 → Attachment 预解 → Distance 投影（SoA/AoSoA，岛级并行、可 AVX2）→ 可选 Bending → 速度更新与阻尼。
+  - Telemetry：step_ms、average distance residual。
+- 其他
+  - Capability 枚举按编译宏导出组合；示例与可执行可构建（Debug/Release）。
 
+—
 
-阶段 4：Bending/Attachment + 相位化命令与事件 + 稳健 Remap
-- 目的：丰富算子与命令/事件通道，完成结构变更的安全重建与状态迁移。
-- 任务：
-  - Cooking：
-    - 识别 bending/attachment 的关系输入（bend_pairs/ pins），生成相位与批次；预计算 bending 目标角/权重。
-  - Kernels：
-    - 实现 attachment（朝目标投影、支持不同权重），实现 bending（基线对偶形式）。
-  - Runtime：
-    - BeforeFrame/AfterSolve 两阶段 flush 完整落地；小命令直达 Overrides/Data，结构事件触发 rebuild+remap。
-  - Remap：
-    - 支持节点增删、边修改后的数据迁移；对失效 λ 清零；对新增约束初始化 λ=0。
-  - Telemetry：
-    - 残差采样（每迭代或每批次）；记录重建次数与平均耗时。
-- 交付物：
-  - 示例 e_flag：带 bending 与 attachment 的旗帜（顶边固定，中部目标点拉扯）。
-- 验收：
-  - 在结构事件（增删边/启停算子）后，状态连续，无爆 NaN；残差曲线稳定。
+## 与蓝图的差距（未完成/待完善清单）
+- PhaseGraph/批次/确定性
+  - 未按 Operators 读/写集构建 PhaseGraph、颜色/批次与稳定排序键（`src/runtime/phases.cpp` 空）。
+  - 未实现“每相位 barrier + 固定分块 + 确定性分割”的统一执行计划。
+- Scheduler/并行
+  - `backend/scheduler/tbb.cpp` 尚未实现；当前并行仅限 runtime 内“按岛 tbb::parallel_for”，无批内分块与 barrier 管理。
+  - 缺固定任务粒度与稳定分配策略（确定性 Level 1/2）。
+- 事件与结构变更
+  - `src/runtime/apply_events.cpp` 空；结构命令在 `engine_adapter` 触发 rebuild，但 `cooking_rebuild_model_from_commands` 仅复制旧模型（未处理 Add/RemoveNodes/Relations、算子启停、布局策略变更）。
+  - Remap 仅支持恒等映射与数据搬迁的基础情形；未处理节点增删、边变更后的 λ 清理/保留策略矩阵（当前统一清零边 λ）。
+- Cooking/布局/预计算
+  - 无 PhaseGraph、无 LayoutPlan（重排索引/块对齐/字段顺序策略）；`node_remap` 恒等。
+  - 预计算缺权重表/邻接/每约束 α 常量包；未落盘缓存（仅内存命中）。
+- 存储/布局执行
+  - AoSoA 仅在每子步 pack→solve→unpack，缺“常驻 blocked 存储视图 + 局部更新”以消除往返拷贝。
+  - `layout_block_size` 选择缺启发式/硬件对齐策略与能力感知。
+- 算子族
+  - Bending 非 XPBD（无 α/λ/inv_mass 权重）；无 Area/Shear；无碰撞/自碰约束族。
+- 校验/翻译/打包
+  - validators 缺 NaN/越界/重复关系检测与严格/宽松两档覆盖；
+  - translators/packers 基本占位，无单位/坐标/别名归一化与 AoS 变体的健壮打包与 stride 保护。
+- Telemetry/可观测
+  - 缺 per-phase/per-batch 耗时与残差曲线、岛屿规模分布、重建次数的细粒度统计与开关。
+- 确定性/数值模式
+  - 未提供稳定规约树、固定分块大小、禁 FMA 等确定性档位切换（README 的 L1/L2 未落地）。
+- 缓存/版本/能力
+  - 模型缓存仅内存 Map；缺版本号与落盘；能力枚举未包含具体向量宽度/对齐/线程上限。
+- 示例/测试/CI
+  - 示例未覆盖 pin/bending/并行/确定性演示；缺最小单元测试与性能基准输出；CI 未配置。
 
+—
 
-阶段 5：Cache/Version/Capability + 校验/打包完善
-- 目的：工程化完善，提升冷启动与鲁棒性。
-- 任务：
-  - Shell/cache_tracker：
-    - 内容哈希（拓扑+Operators+结构参数+布局策略+Space）；命中即从缓存加载 Model；加版本号与兼容策略。
-  - validators/translators/packers：
-    - Tolerant/Strict 两档；字段名别名归一化；单位规范化；AoS/SoA 异构输入安全打包（含 stride 检查）。
-  - Capability：
-    - enumerate_capabilities 输出支持的组合（layout×backend×向量宽度×对齐）。
-- 交付物：
-  - 首次 create 会缓存 model；二次 create 命中后加速（以 2× 为目标，依赖 IO）。
-- 验收：
-  - Fuzz 输入（随机尺寸/stride/缺字段）在 Strict 模式下能准确报错；Tolerant 模式能给出合理默认并继续运行。
+## 新路线图（阶段化交付与验收）
 
+说明：优先保证“XPBD 正确性 → 并行与确定性 → 布局与性能”，每阶段给出交付物与验收标准；默认维持现有对外 API 不变。
 
-阶段 6（可选）：自碰撞与 BVH 骨架
-- 目的：完善布料常见必需特性。
-- 任务：
-  - AccelSkeleton：构建静态 BVH 拓扑；Data 帧内 refit 叶子 AABB。
-  - SelfCollision：点-三角/边-边 代理约束，引入相位并行与 λ 缓冲；支持简单 culling。
-- 交付物：
-  - 示例 e_selfcol：简单布料自碰样例。
-- 验收：
-  - 自碰激活后，穿透大幅减少；帧时回归在可控范围内（可通过算子开关对比）。
+### 阶段 A：XPBD 基线完善（正确性/可调参）
+- 目标：Distance XPBD 完整、运行期可控；Attachment 稳定；最小 Telemetry 完善。
+- 任务
+  - Distance：补充 per-edge α 注入路径（Parameters: distance_compliance 支持全局+覆盖）。
+  - Bending：先收敛为稳定 PBD 版本（带 inv_mass 权重），标注为“实验性”。
+  - Runtime：覆盖 substeps/iterations/damping 的 SetParam 覆盖优先级；残差采样入 Telemetry。
+  - Validators：添加 NaN/越界/重复 edge 检测（宽松→警告，严格→报错）。
+- 交付/验收
+  - e_min 自由下垂/迭代收敛可控；残差随迭代下降；Attachment 在 pin 与非 pin 上行为正确。
 
+### 阶段 B：PhaseGraph + 确定性顺序（可并行的计划）
+- 目标：固化“算子 → 阶段/批次”的执行计划，形成确定性顺序和批粒度。
+- 任务
+  - PhaseGraph：按 OperatorsDecl 推导读/写集，岛内对每关系独立染色；稳定排序键。
+  - 批次：固定分块（默认 64 约束/任务）并持久化到 Model；
+  - Runtime：按 island→phase→batch 的顺序执行（先 seq 基线）。
+- 交付/验收
+  - 在仅 Distance 情形下，PhaseGraph 生成一致；结果与旧实现 bitwise 保持或误差阈内一致。
 
-阶段 7：文档/示例/基准/CI 收尾
-- 目的：对外可用与可持续。
-- 任务：
-  - README：补充 PhaseGraph 颜色规则规范、AoSoA/AVX2 约定小白皮书、事件重建与 remap 状态迁移矩阵。
-  - examples：加入更大规模 cloth、参数扫频脚本；并行/确定性开关演示。
-  - 基准：不同规模/迭代/后端对比；导出 CSV。
-  - CI：不同线程数/后端/构建型的回归矩阵；确定性检查（bitwise 或阈值内一致）。
-- 交付物：
-  - 文档与示例齐备；一键构建与跑基准；CI 绿。
-- 验收：
-  - PR 模板 + 回归报告样例；跨版本缓存兼容验证通过。
+### 阶段 C：TBB 调度与确定性（L1）
+- 目标：实现可复现的并行调度（Level 1）。
+- 任务
+  - Scheduler.TBB：按 island 粗粒度 + batch 细粒度并行；相位 barrier；固定任务划分与稳定分配。
+  - Runtime：可切换 Backend=Seq/TBB，结果逐位一致（或限定阈内）。
+  - Telemetry：记录 per-phase 耗时与岛屿规模直方图（粗略）。
+- 交付/验收
+  - e_pin 在多线程下结果与单线程一致；TBB 相对 seq 可获得 >1.5× 加速（依规模）。
 
+### 阶段 D：LayoutPlan + AoSoA 常驻 + AVX2 强化（性能）
+- 目标：布局驱动性能，消除子步的 pack/unpack 往返。
+- 任务
+  - Cooking.LayoutPlan：根据硬件与策略选择 block_size，生成 node_remap 与对齐分配计划。
+  - Data/Storage：引入“常驻 blocked 视图”，仅在必要时与 SoA 互转；约束核支持 AoSoA 直接运行。
+  - Kernels：审视 AVX2 路径的 gather/scatter 与越界保护；统一签名与回退路径。
+  - Registry：结合 CPUID/Policy 选择 SoA/AoSoA × Native/AVX2。
+- 交付/验收
+  - 中等规模（~50k 约束）下 AVX2+AoSoA 较 SoA 标量达到 >2× 加速；无未对齐访问错误。
 
-附录：任务到代码模块的粗映射
-- Shell：`src/shell/*.cpp`（validators/translators/packers/cache_tracker/sim_*）
-- Cooking：`src/cooking/*`, `src/core/model/*`
-- Data/Remap：`src/core/data/*`
-- Backends：`src/backend/storage/*`, `src/backend/kernel/*`, `src/backend/scheduler/*`, `src/backend/registry/*`
-- Runtime：`src/runtime/*`
-- Adapter：`src/adapter/*`
-- API：`src/api/*`
-- 示例与测试：`examples/*`, `tests/*`（可新增）
+### 阶段 E：事件重建 + Remap 稳健化
+- 目标：结构变更可用，状态迁移安全可控。
+- 任务
+  - Cooking.Rebuild：支持 Add/RemoveNodes/Relations/启停算子/布局策略变更；
+  - Remap：节点向量映射、边 λ 清零/保留策略矩阵；AoSoA 缓冲随布局重配；
+  - Runtime.apply_events：在帧边界应用事件并重建+迁移；
+  - Telemetry：记录重建次数与耗时。
+- 交付/验收
+  - 示例 e_flag：运行中启停 bending/attachment、剪切边/加边后不爆 NaN，状态连续。
 
-风险与缓解
-- 浮点确定性：采用固定任务切分、稳定排序、禁用 FMA（可选级别），收敛到“Level 1/2”。
-- 性能回退：每阶段保留 seq+SoA 路径为金标准，对比确保回退时仍可用。
-- 重构风险：优先扩展不破坏 API 的内部模块；公共结构（BuildDesc/Policy 等）谨慎演进，必要时通过版本化与兼容层处理。
+### 阶段 F：工程化（Cache/Version/Capability/验证）
+- 目标：提升冷启动与鲁棒性，完善输入面与能力查询。
+- 任务
+  - Cache：内容哈希 + 版本号 + 落盘（安全降级策略）。
+  - Validators/Translators/Packers：严格/宽松两档、单位/坐标归一化、AoS/SoA 变体打包与 stride 检查。
+  - Capability：输出 backend×layout×向量宽度×对齐×线程上限。
+  - Tests/Bench：最小单元测试与 bench CSV 输出；本地脚本做冒烟/回归。
+- 交付/验收
+  - 二次 create 命中缓存提速明显；Fuzz 输入在严格模式下稳定报错，宽松模式给出合理默认继续运行。
 
+### 阶段 G（可选）：自碰与 BVH 骨架
+- 目标：支撑常见布料自碰；保留轻量性能目标。
+- 任务
+  - AccelSkeleton：静态 BVH 拓扑；Data 帧内 refit 叶子 AABB。
+  - SelfCollision：点-三角/边-边 代理约束；进入 PhaseGraph 与并行体系；
+- 交付/验收
+  - e_selfcol 示例可复现基础自碰；穿透明显减少，帧时可控。
+
+—
+
+## 近期两周落地清单（Quick Wins）
+- validators：补 NaN/越界/重复 edge 的检查与统计（宽松→警告）。
+- Telemetry：记录 iterations/substeps、per-step 残差；导出 chosen 后端与布局。
+- 示例：新增 e_pin 展示 inv_mass=0 与 attachment；bench 输出 CSV。
+- TBB：在现有 runtime 岛级并行基础上加 threads 上限控制与稳定任务粒度。
+
+—
+
+## 任务→代码模块映射（执行参考）
+- PhaseGraph/批次：`src/runtime/phases.*`，`src/cooking/*`（生成图/颜色/批次并序列化至 Model）。
+- Scheduler（TBB）：`src/backend/scheduler/tbb.*`；Runtime 调度整合：`src/runtime/step.cpp`。
+- LayoutPlan/AoSoA：`src/cooking/cooking.*`（重排索引/块计划）、`src/backend/storage/*`、`src/backend/kernel/*`（AoSoA 直接核）。
+- 事件/Remap：`src/runtime/apply_events.*`、`src/cooking/cooking.*`、`src/core/data/*`。
+- 校验/打包/缓存：`src/shell/*`（validators/translators/packers/cache_tracker）。
+- 能力/注册表：`src/backend/registry/*`。
+- Telemetry：`src/api/telemetry.h` + `src/runtime/step.cpp` 采样与聚合。
+
+—
+
+## 验收基线（绿灯标准）
+- 构建：Windows Release/Debug 可编译；开启/关闭 AVX2、TBB 宏均能通过。
+- 功能：e_min/e_pin/e_flag 跑通；命令/事件在帧边界生效；无 NaN。
+- 确定性：Seq 与 TBB 在 Level 1 下数值逐位或阈值内一致（记录阈值）。
+- 性能：AoSoA+AVX2 在中等规模下较 SoA 标量加速比达标；并行扩展性合理。
+
+—
+
+若需，我可以按此路线图先落“阶段 A + 近期 Quick Wins”，并补上 e_pin 示例与 bench 脚本。
