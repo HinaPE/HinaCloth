@@ -8,7 +8,7 @@
 
 namespace sim {
     struct Solver;
-    Result<Solver*> create(const BuildDesc& desc);
+    [[nodiscard]] Result<Solver*> create(const BuildDesc& desc);
     void destroy(Solver* s);
     Status step(Solver* s, float dt);
     Status push_command(Solver* s, const Command& c);
@@ -20,8 +20,8 @@ namespace sim {
         int threads;
     };
 
-    Result<Chosen> query_chosen(Solver* s);
-    Status telemetry_query_frame(Solver* s, TelemetryFrame* out);
+    [[nodiscard]] Result<Chosen> query_chosen(Solver* s);
+    [[nodiscard]] Status telemetry_query_frame(Solver* s, TelemetryFrame* out);
 }
 
 #endif //HINACLOTH_SIM_H

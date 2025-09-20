@@ -68,10 +68,9 @@ int main() {
         if (step(s, dt) != Status::Ok) { std::printf("[smoke] step failed\n"); destroy(s); return 2; }
     }
 
-    TelemetryFrame tf{}; telemetry_query_frame(s, &tf);
+    TelemetryFrame tf{}; Status rc = telemetry_query_frame(s, &tf); (void)rc;
     std::printf("[smoke] ok: step_ms=%.3f cmds=%llu rebuilds=%llu\n", tf.step_ms, (unsigned long long)tf.commands_applied, (unsigned long long)tf.structural_rebuilds);
 
     destroy(s);
     return 0;
 }
-

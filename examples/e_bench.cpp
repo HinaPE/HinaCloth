@@ -107,7 +107,7 @@ static double run_case(uint32_t nx, uint32_t ny, Backend b, DataLayout l, int th
     Solver* s = r.value;
     const float dt = 1.0f/60.0f;
     double sum_ms = 0.0; int ok_frames=0;
-    for(int f=0; f<frames; ++f){ step(s, dt); TelemetryFrame tf{}; telemetry_query_frame(s, &tf); if (tf.step_ms>0){sum_ms += tf.step_ms; ok_frames++;} }
+    for(int f=0; f<frames; ++f){ step(s, dt); TelemetryFrame tf{}; (void)telemetry_query_frame(s, &tf); if (tf.step_ms>0){sum_ms += tf.step_ms; ok_frames++;} }
     destroy(s);
     return ok_frames>0 ? (sum_ms/ok_frames) : -1.0;
 }
@@ -135,4 +135,3 @@ int main(int ac, char** av){
     }
     return 0;
 }
-

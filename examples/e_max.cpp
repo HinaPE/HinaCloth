@@ -195,7 +195,7 @@ int main()
         flush_commands(s, ApplyPhase::AfterSolve);
         if (f % 30 == 0) {
             TelemetryFrame tf{};
-            telemetry_query_frame(s, &tf);
+            Status rc = telemetry_query_frame(s, &tf); (void)rc;
             std::printf("frame=%d telemetry: step_ms=%.3f cmds=%llu rebuilds=%llu\n",
                         f, tf.step_ms, (unsigned long long) tf.commands_applied, (unsigned long long) tf.structural_rebuilds);
         }
@@ -207,7 +207,7 @@ int main()
     flush_commands(s, ApplyPhase::BeforeFrame);
 
     TelemetryFrame tf{};
-    telemetry_query_frame(s, &tf);
+    Status rc = telemetry_query_frame(s, &tf); (void)rc;
     std::printf("final telemetry: step_ms=%.3f cmds=%llu rebuilds=%llu\n",
                 tf.step_ms, (unsigned long long) tf.commands_applied, (unsigned long long) tf.structural_rebuilds);
 

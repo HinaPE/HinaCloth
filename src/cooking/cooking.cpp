@@ -1,4 +1,5 @@
 #include "cooking.h"
+#include "core/common/utils.h"
 
 #include <cstdint>
 #include <cstring>
@@ -9,17 +10,10 @@
 #include <algorithm>
 
 namespace sim {
-    static bool name_matches(const char* want, const char* got) {
-        if (!want || !got) return false;
-        if (std::strcmp(want, got) == 0) return true;
-        if (std::strcmp(want, "position") == 0) return std::strcmp(got, "pos") == 0 || std::strcmp(got, "positions") == 0;
-        if (std::strcmp(want, "velocity") == 0) return std::strcmp(got, "vel") == 0 || std::strcmp(got, "velocities") == 0;
-        return false;
-    }
     static const void* find_field(const StateInit& st, const char* name, size_t comps, size_t& count, size_t& stride) {
         for (size_t i = 0; i < st.field_count; i++) {
             auto& f = st.fields[i];
-            if (name_matches(name, f.name) && f.components == comps) {
+            if (util::name_matches(name, f.name) && f.components == comps) {
                 count  = f.count;
                 stride = f.stride_bytes;
                 return f.data;
@@ -87,24 +81,17 @@ namespace sim {
         // Reorder edges/rest and fill offsets
         m.island_count = (uint32_t) cc;
         m.island_offsets.assign(cc + 1, 0);
-        std::size_t offset = 0;
         std::vector<uint32_t> new_edges; new_edges.reserve(m.edges.size());
         std::vector<float> new_rest; new_rest.reserve(m.rest.size());
         for (int cidx = 0; cidx < cc; ++cidx) {
             m.island_offsets[cidx] = (uint32_t) (new_rest.size());
-            // append pairs/rest
             new_edges.insert(new_edges.end(), edge_pairs[cidx].begin(), edge_pairs[cidx].end());
             new_rest.insert(new_rest.end(), edge_rest[cidx].begin(), edge_rest[cidx].end());
         }
         m.island_offsets[cc] = (uint32_t) (new_rest.size());
         m.edges.swap(new_edges);
         m.rest.swap(new_rest);
-        (void) offset;
     }
-
-    static inline void cross3(float ax, float ay, float az, float bx, float by, float bz, float& rx, float& ry, float& rz){ rx = ay*bz - az*by; ry = az*bx - ax*bz; rz = ax*by - ay*bx; }
-    static inline float dot3(float ax, float ay, float az, float bx, float by, float bz){ return ax*bx+ay*by+az*bz; }
-    static inline float len3(float x, float y, float z){ return std::sqrt(x*x+y*y+z*z); }
 
     static float dihedral_angle(const std::vector<float>& x, const std::vector<float>& y, const std::vector<float>& z,
                                 uint32_t i0, uint32_t i1, uint32_t i2, uint32_t i3) {
@@ -112,11 +99,11 @@ namespace sim {
         float e1x = x[i2]-x[i0], e1y = y[i2]-y[i0], e1z = z[i2]-z[i0];
         float e2x = x[i3]-x[i0], e2y = y[i3]-y[i0], e2z = z[i3]-z[i0];
         float n1x,n1y,n1z,n2x,n2y,n2z;
-        cross3(e0x,e0y,e0z, e1x,e1y,e1z, n1x,n1y,n1z);
-        cross3(e0x,e0y,e0z, e2x,e2y,e2z, n2x,n2y,n2z);
-        float n1l = len3(n1x,n1y,n1z); float n2l = len3(n2x,n2y,n2z);
+        util::cross3(e0x,e0y,e0z, e1x,e1y,e1z, n1x,n1y,n1z);
+        util::cross3(e0x,e0y,e0z, e2x,e2y,e2z, n2x,n2y,n2z);
+        float n1l = util::len3(n1x,n1y,n1z); float n2l = util::len3(n2x,n2y,n2z);
         if (n1l <= 1e-12f || n2l <= 1e-12f) return 0.0f;
-        float c = dot3(n1x,n1y,n1z, n2x,n2y,n2z) / (n1l*n2l);
+        float c = util::dot3(n1x,n1y,n1z, n2x,n2y,n2z) / (n1l*n2l);
         c = std::clamp(c, -1.0f, 1.0f);
         float ang = std::acos(c);
         return ang;
@@ -172,6 +159,7 @@ namespace sim {
     }
 
     bool cooking_rebuild_model_from_commands(const Model& cur, const Command* cmds, size_t count, Model*& out, RemapPlan*& plan) {
+        (void)cmds; (void)count;
         Model* m = new(std::nothrow) Model();
         if (!m) return false;
         m->node_count = cur.node_count;

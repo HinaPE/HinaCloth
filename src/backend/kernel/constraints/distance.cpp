@@ -1,6 +1,7 @@
 #include "distance.h"
 #include <cstdint>
 #include <cmath>
+#include <span>
 
 namespace sim {
     void kernel_distance_project(const uint32_t* edges, size_t m,
@@ -11,6 +12,9 @@ namespace sim {
                                  int iterations,
                                  float alpha,
                                  float /*dt*/) {
+        std::span<const float> R{rest, m};
+        std::span<const float> W{}; if (inv_mass) W = std::span<const float>(inv_mass, pos.n);
+        std::span<float> L{}; if (lambda_edge) L = std::span<float>(lambda_edge, m);
         for (int it = 0; it < iterations; ++it) {
             for (size_t e = 0; e < m; ++e) {
                 uint32_t a = edges[2 * e + 0], b = edges[2 * e + 1];
@@ -20,12 +24,12 @@ namespace sim {
                 float dx = bx - ax, dy = by - ay, dz = bz - az;
                 float len = std::sqrt(dx * dx + dy * dy + dz * dz);
                 if (len <= 1e-8f) continue;
-                float C = len - rest[e];
-                float wi = inv_mass ? inv_mass[a] : 1.0f;
-                float wj = inv_mass ? inv_mass[b] : 1.0f;
+                float C = len - R[e];
+                float wi = inv_mass ? W[a] : 1.0f;
+                float wj = inv_mass ? W[b] : 1.0f;
                 float denom = wi + wj + alpha;
                 if (denom <= 0.0f) continue;
-                float lambda_prev = lambda_edge ? lambda_edge[e] : 0.0f;
+                float lambda_prev = lambda_edge ? L[e] : 0.0f;
                 float dlambda = -(C + alpha * lambda_prev) / denom;
                 float s = dlambda / len;
                 float cx = s * dx, cy = s * dy, cz = s * dz;
@@ -40,7 +44,7 @@ namespace sim {
                     pos.y[b] -= wj * cy;
                     pos.z[b] -= wj * cz;
                 }
-                if (lambda_edge) lambda_edge[e] = lambda_prev + dlambda;
+                if (lambda_edge) L[e] = lambda_prev + dlambda;
             }
         }
     }

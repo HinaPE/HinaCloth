@@ -23,8 +23,8 @@ namespace sim {
     bool backends_choose(const Model& m, const PolicyExec& exec, struct Chosen& out);
     Status runtime_step(const Model& m, Data& d, float dt, const SolveOverrides* ovr, TelemetryFrame* out);
     // cache tracker (shell)
-    bool shell_cache_query(uint64_t& key_out);
-    bool shell_cache_load(uint64_t key, Model*& out);
+    [[nodiscard]] bool shell_cache_query(uint64_t& key_out);
+    [[nodiscard]] bool shell_cache_load(uint64_t key, Model*& out);
     void shell_cache_store(uint64_t key, const Model& m);
 
     struct EngineHandle {
@@ -35,10 +35,6 @@ namespace sim {
         unsigned long long applied;
         unsigned long long rebuilds;
     };
-
-    static Status fail(Status s) {
-        return s;
-    }
 
     EngineHandle* engine_create(const BuildDesc& desc) {
         EngineHandle* e = new(std::nothrow) EngineHandle();

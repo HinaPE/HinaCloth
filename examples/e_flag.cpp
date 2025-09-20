@@ -130,7 +130,7 @@ int main() {
         // Optionally flush AfterSolve queued commands
         flush_commands(s, ApplyPhase::AfterSolve);
         if (f % 30 == 0) {
-            TelemetryFrame tf{}; telemetry_query_frame(s, &tf);
+            TelemetryFrame tf{}; Status rc = telemetry_query_frame(s, &tf); (void)rc;
             std::printf("[flag] frame=%d step_ms=%.3f cmds=%llu rebuilds=%llu\n", f, tf.step_ms, (unsigned long long)tf.commands_applied, (unsigned long long)tf.structural_rebuilds);
         }
     }
@@ -138,4 +138,3 @@ int main() {
     destroy(s);
     return 0;
 }
-

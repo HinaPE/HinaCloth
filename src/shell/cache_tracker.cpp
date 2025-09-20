@@ -16,7 +16,6 @@ namespace sim {
         x ^= x >> 33;
         return x;
     }
-    static uint64_t mix_ptr(const void* p) { return hash64((uint64_t) (uintptr_t) p); }
     static uint64_t mix_str(const char* s) {
         if (!s) return 0;
         uint64_t h = 1469598103934665603ull;
@@ -94,21 +93,6 @@ namespace sim {
     void shell_cache_track_end() { (void) acc; }
 
     bool shell_cache_query(uint64_t& key_out) { key_out = acc; return acc != 0; }
-
-    static Model* clone_model(const Model& m) {
-        Model* c = new(std::nothrow) Model();
-        if (!c) return nullptr;
-        c->node_count = m.node_count;
-        c->edges = m.edges;
-        c->rest  = m.rest;
-        c->island_count   = m.island_count;
-        c->island_offsets = m.island_offsets;
-        c->node_remap = m.node_remap;
-        c->layout_block_size = m.layout_block_size;
-        c->bend_pairs = m.bend_pairs;
-        c->bend_rest_angle = m.bend_rest_angle;
-        return c;
-    }
 
     struct ModelCacheEntry { std::vector<uint32_t> edges; std::vector<float> rest; uint32_t node_count; std::vector<uint32_t> island_offsets; uint32_t island_count; std::vector<uint32_t> node_remap; uint32_t layout_block_size; std::vector<uint32_t> bend_pairs; std::vector<float> bend_rest_angle; };
     static std::unordered_map<uint64_t, ModelCacheEntry> g_cache;

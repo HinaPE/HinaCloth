@@ -160,7 +160,8 @@ int main() {
 
     // 7) 遥测查询
     TelemetryFrame tf{};
-    telemetry_query_frame(s, &tf);
+    Status st_tf = telemetry_query_frame(s, &tf);
+    (void) st_tf;
     std::printf("telemetry: step_ms=%.3f cmds=%llu rebuilds=%llu\n", tf.step_ms, (unsigned long long) tf.commands_applied, (unsigned long long) tf.structural_rebuilds);
 
     // 8) 销毁 Solver
