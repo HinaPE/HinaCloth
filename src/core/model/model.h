@@ -11,6 +11,9 @@ namespace sim {
         // Islanding metadata
         uint32_t island_count{1};
         std::vector<uint32_t> island_offsets; // size = island_count+1, edge counts prefix sum
+        // Layout plan (Stage 3)
+        std::vector<uint32_t> node_remap; // author index -> internal index
+        uint32_t layout_block_size{8};    // preferred AoSoA block size
     };
 
     void core_model_destroy(Model* m);

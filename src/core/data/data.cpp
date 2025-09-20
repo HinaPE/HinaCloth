@@ -41,10 +41,14 @@ namespace sim {
         // defaults
         d->gx = 0.0f; d->gy = -9.8f; d->gz = 0.0f;
         d->distance_compliance = 0.0f;
-        // Exec policy
+        // Exec policy from input (may be overridden by registry selection later)
         d->exec_use_tbb  = (in.policy.exec.backend == Backend::TBB);
         d->exec_threads  = in.policy.exec.threads == 0 ? -1 : in.policy.exec.threads;
         d->exec_use_avx2 = (in.policy.exec.backend == Backend::AVX2);
+        // Layout flags (Stage 3)
+        d->exec_layout_blocked = (in.policy.exec.layout == DataLayout::Blocked);
+        unsigned int blk = in.pack.block_size > 0 ? (unsigned int) in.pack.block_size : (m.layout_block_size > 0 ? m.layout_block_size : 8u);
+        d->layout_block_size = blk;
         // Map policy solve defaults
         d->solve_substeps   = in.policy.solve.substeps > 0 ? in.policy.solve.substeps : 1;
         d->solve_iterations = in.policy.solve.iterations > 0 ? in.policy.solve.iterations : 8;
@@ -85,6 +89,11 @@ namespace sim {
         d->inv_mass.assign(npos, 1.0f);
         size_t ecount = m.edges.size() / 2;
         d->lambda_edge.assign(ecount, 0.0f);
+        // Preallocate AoSoA buffer if requested
+        if (d->exec_layout_blocked) {
+            size_t nb = (npos + (size_t)blk - 1) / (size_t)blk;
+            d->pos_aosoa.assign(3u * (size_t)blk * nb, 0.0f);
+        }
         out   = d;
         return true;
     }
@@ -155,6 +164,13 @@ namespace sim {
         d->exec_use_tbb = oldd.exec_use_tbb;
         d->exec_threads = oldd.exec_threads;
         d->exec_use_avx2 = oldd.exec_use_avx2;
+        // Preserve layout preferences and AoSoA buffer capacity
+        d->exec_layout_blocked = oldd.exec_layout_blocked;
+        d->layout_block_size   = oldd.layout_block_size;
+        if (d->exec_layout_blocked) {
+            size_t nb = (n + (size_t)d->layout_block_size - 1) / (size_t)d->layout_block_size;
+            d->pos_aosoa.assign(3u * (size_t)d->layout_block_size * nb, 0.0f);
+        }
         newd  = d;
         return true;
     }

@@ -35,6 +35,10 @@ namespace sim {
         bool  exec_use_tbb;
         int   exec_threads; // -1 auto
         bool  exec_use_avx2;
+        // Layout selection (Stage 3)
+        bool  exec_layout_blocked; // true => use AoSoA blocked layout during solve
+        unsigned int layout_block_size; // AoSoA block size (8/16)
+        std::vector<float> pos_aosoa;   // 3*block*ceil(n/block) packed positions buffer for AoSoA
     };
 
     bool core_data_create_from_state(const BuildDesc& in, const Model& m, Data*& out);

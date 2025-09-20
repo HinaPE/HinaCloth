@@ -128,6 +128,10 @@ namespace sim {
         }
         // Stage 2: compute islands & reorder constraints by island
         compute_islands_and_reorder(*m);
+        // Stage 3: LayoutPlan defaults (identity remap and block size)
+        m->node_remap.resize(m->node_count);
+        for (uint32_t i = 0; i < m->node_count; ++i) m->node_remap[i] = i;
+        if (in.pack.block_size > 0) m->layout_block_size = (uint32_t) in.pack.block_size;
         out = m;
         return true;
     }
@@ -140,6 +144,9 @@ namespace sim {
         m->rest       = cur.rest;
         m->island_count   = cur.island_count;
         m->island_offsets = cur.island_offsets;
+        // Preserve layout plan defaults across rebuild for now
+        m->node_remap      = cur.node_remap;
+        m->layout_block_size = cur.layout_block_size;
         RemapPlan* rp = new(std::nothrow) RemapPlan();
         if (!rp) {
             delete m;

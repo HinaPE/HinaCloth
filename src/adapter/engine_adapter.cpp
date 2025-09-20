@@ -1,7 +1,10 @@
 #include "engine_adapter.h"
+
 #include "api/sim.h"
-#include <new>
+#include "core/data/data.h"
+#include "core/model/model.h"
 #include <cstddef>
+#include <new>
 
 namespace sim {
     struct Model;
@@ -61,6 +64,21 @@ namespace sim {
             return nullptr;
         }
         e->chosen = ch;
+        // Propagate chosen backend/layout into Data
+        if (d) {
+            d->exec_use_avx2       = (ch.backend == Backend::AVX2);
+            d->exec_use_tbb        = (ch.backend == Backend::TBB);
+            d->exec_threads        = (ch.threads <= 0) ? -1 : ch.threads;
+            d->exec_layout_blocked = (ch.layout == DataLayout::Blocked);
+            // Ensure AoSoA buffer sized if needed
+            if (d->exec_layout_blocked) {
+                unsigned int blk = d->layout_block_size > 0 ? d->layout_block_size : (m->layout_block_size > 0 ? m->layout_block_size : 8u);
+                d->layout_block_size = blk;
+                std::size_t n = d->px.size();
+                std::size_t nb = (n + (std::size_t)blk - 1) / (std::size_t)blk;
+                d->pos_aosoa.assign(3u * (std::size_t)blk * nb, 0.0f);
+            }
+        }
         return e;
     }
 
@@ -104,5 +122,11 @@ namespace sim {
     Status engine_step(EngineHandle* e, float dt, const SolveOverrides* ovr, TelemetryFrame* out) {
         if (!e || !e->data || !e->model) return Status::InvalidArgs;
         return runtime_step(*e->model, *e->data, dt, ovr, out);
+    }
+
+    bool engine_query_chosen(EngineHandle* e, Chosen& out) {
+        if (!e) return false;
+        out = e->chosen;
+        return true;
     }
 }

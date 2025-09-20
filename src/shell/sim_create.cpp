@@ -46,7 +46,10 @@ namespace sim {
         s->tf.step_ms             = 0.0;
         s->tf.commands_applied    = 0;
         s->tf.structural_rebuilds = 0;
-        s->chosen                 = choose_from_policy(cfg);
+        // Query actual chosen from engine
+        Chosen actual{};
+        if (engine_query_chosen(s->e, actual)) s->chosen = actual;
+        else s->chosen = choose_from_policy(cfg);
         s->applied                = 0;
         s->rebuilds               = 0;
         Result<Solver*> r;
