@@ -9,10 +9,17 @@
 #include <cstdint>
 
 namespace sim {
+    static bool name_matches(const char* want, const char* got) {
+        if (!want || !got) return false;
+        if (std::strcmp(want, got) == 0) return true;
+        if (std::strcmp(want, "position") == 0) return std::strcmp(got, "pos") == 0 || std::strcmp(got, "positions") == 0;
+        if (std::strcmp(want, "velocity") == 0) return std::strcmp(got, "vel") == 0 || std::strcmp(got, "velocities") == 0;
+        return false;
+    }
     static const void* find_field(const StateInit& st, const char* name, size_t comps, size_t& count, size_t& stride) {
         for (size_t i = 0; i < st.field_count; i++) {
             auto& f = st.fields[i];
-            if (std::strcmp(f.name, name) == 0 && f.components == comps) {
+            if (name_matches(name, f.name) && f.components == comps) {
                 count  = f.count;
                 stride = f.stride_bytes;
                 return f.data;

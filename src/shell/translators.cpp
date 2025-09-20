@@ -2,9 +2,12 @@
 
 namespace sim {
     static void normalize_units([[maybe_unused]] BuildDesc& d) {
+        // Placeholder: if units were provided, convert to internal SI.
     }
 
     static void normalize_fields([[maybe_unused]] BuildDesc& d) {
+        // No in-place renaming because StateInit.fields points to const FieldView array from user.
+        // Alias handling is implemented in validators/cooking/data find_field functions.
     }
 
     static void normalize_policy(BuildDesc& d) {

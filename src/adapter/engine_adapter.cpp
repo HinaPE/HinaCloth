@@ -5,6 +5,7 @@
 #include "core/model/model.h"
 #include <cstddef>
 #include <new>
+#include <cstdint>
 
 namespace sim {
     struct Model;
@@ -21,6 +22,10 @@ namespace sim {
     void core_remapplan_destroy(RemapPlan* p);
     bool backends_choose(const Model& m, const PolicyExec& exec, struct Chosen& out);
     Status runtime_step(const Model& m, Data& d, float dt, const SolveOverrides* ovr, TelemetryFrame* out);
+    // cache tracker (shell)
+    bool shell_cache_query(uint64_t& key_out);
+    bool shell_cache_load(uint64_t key, Model*& out);
+    void shell_cache_store(uint64_t key, const Model& m);
 
     struct EngineHandle {
         Model* model;
@@ -44,9 +49,22 @@ namespace sim {
         e->applied  = 0;
         e->rebuilds = 0;
         Model* m    = nullptr;
-        if (!cooking_build_model(desc, m)) {
-            delete e;
-            return nullptr;
+        // Try model cache first
+        uint64_t key = 0;
+        bool have_key = shell_cache_query(key);
+        if (have_key) {
+            if (!shell_cache_load(key, m)) {
+                if (!cooking_build_model(desc, m)) {
+                    delete e;
+                    return nullptr;
+                }
+                shell_cache_store(key, *m);
+            }
+        } else {
+            if (!cooking_build_model(desc, m)) {
+                delete e;
+                return nullptr;
+            }
         }
         Data* d = nullptr;
         if (!core_data_create_from_state(desc, *m, d)) {
