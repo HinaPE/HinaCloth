@@ -1,8 +1,7 @@
 #include "api/sim.h"
 #include "api/capability.h"
-#include <vector>
-#include <string>
 #include <cstdio>
+#include <vector>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
@@ -107,7 +106,7 @@ static double run_case(uint32_t nx, uint32_t ny, Backend b, DataLayout l, int th
     Solver* s = r.value;
     const float dt = 1.0f/60.0f;
     double sum_ms = 0.0; int ok_frames=0;
-    for(int f=0; f<frames; ++f){ step(s, dt); TelemetryFrame tf{}; (void)telemetry_query_frame(s, &tf); if (tf.step_ms>0){sum_ms += tf.step_ms; ok_frames++;} }
+    for(int f=0; f<frames; ++f){ step(s, dt); TelemetryFrame tf{}; Status st_tf = telemetry_query_frame(s, &tf); (void)st_tf; if (tf.step_ms>0){sum_ms += tf.step_ms; ok_frames++;} }
     destroy(s);
     return ok_frames>0 ? (sum_ms/ok_frames) : -1.0;
 }
@@ -121,17 +120,14 @@ int main(int ac, char** av){
         std::printf("%s,%s,%d,%u,%u,%llu,%d,%d,%.4f\n", backend_name(a.backend), layout_name(a.layout), a.threads, a.nx, a.ny, (unsigned long long)edges, a.substeps, a.iterations, ms);
         return 0;
     }
-    // Sweep a few sizes and backends available
+    // Sweep capabilities
     std::vector<Capability> caps(enumerate_capabilities(nullptr,0));
     caps.resize(enumerate_capabilities(caps.data(), caps.size()));
     std::vector<std::pair<uint32_t,uint32_t>> sizes = {{32,32},{64,64},{96,96}};
-    for (auto& c : caps){
-        Backend b = c.backend; DataLayout l = c.layout;
-        for (auto [nx,ny] : sizes){
+    for (auto& c : caps){ Backend b = c.backend; DataLayout l = c.layout; for (auto [nx,ny] : sizes){
             double ms = run_case(nx,ny,b,l,a.threads,a.frames,a.substeps,a.iterations);
             uint64_t edges = (uint64_t)( (nx*(uint64_t)ny - ny) + (nx*(uint64_t)ny - nx) );
             std::printf("%s,%s,%d,%u,%u,%llu,%d,%d,%.4f\n", backend_name(b), layout_name(l), a.threads, nx, ny, (unsigned long long)edges, a.substeps, a.iterations, ms);
-        }
-    }
+        }}
     return 0;
 }
