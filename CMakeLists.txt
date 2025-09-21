@@ -171,62 +171,6 @@ if (HINACLOTH_BUILD_EXAMPLES)
         add_executable(example_ex06_bench ${EXAMPLES_DIR}/ex06_bench_cli.cpp)
         _hina_setup_example(example_ex06_bench)
     endif()
-
-    # =============================
-    # Visualizer-based examples (vx00..)
-    # =============================
-    if (HINACLOTH_HAVE_VULKAN_VISUALIZER)
-        if (EXISTS ${EXAMPLES_DIR}/vx00_window.cpp)
-            add_executable(visual_vx00_window ${EXAMPLES_DIR}/vx00_window.cpp)
-            target_link_libraries(visual_vx00_window PRIVATE vulkan_visualizer libhinacloth)
-            target_compile_features(visual_vx00_window PRIVATE cxx_std_23)
-            hinacloth_apply_common_warnings(visual_vx00_window)
-            hinacloth_apply_release_opts(visual_vx00_window)
-            if (WIN32)
-                add_custom_command(TARGET visual_vx00_window POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        $<TARGET_RUNTIME_DLLS:visual_vx00_window>
-                        $<TARGET_FILE_DIR:visual_vx00_window>
-                    COMMAND_EXPAND_LISTS)
-            endif()
-        endif()
-        if (EXISTS ${EXAMPLES_DIR}/vx01_sim_overview.cpp)
-            add_executable(visual_vx01_sim_overview ${EXAMPLES_DIR}/vx01_sim_overview.cpp)
-            target_link_libraries(visual_vx01_sim_overview PRIVATE vulkan_visualizer libhinacloth)
-            target_compile_features(visual_vx01_sim_overview PRIVATE cxx_std_23)
-            hinacloth_apply_common_warnings(visual_vx01_sim_overview)
-            hinacloth_apply_release_opts(visual_vx01_sim_overview)
-            if (TARGET hinacloth_example_shaders)
-                add_dependencies(visual_vx01_sim_overview hinacloth_example_shaders)
-            endif()
-            target_compile_definitions(visual_vx01_sim_overview PRIVATE SHADER_OUTPUT_DIR="${HINA_SHADER_BIN_DIR}")
-            if (WIN32)
-                add_custom_command(TARGET visual_vx01_sim_overview POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        $<TARGET_RUNTIME_DLLS:visual_vx01_sim_overview>
-                        $<TARGET_FILE_DIR:visual_vx01_sim_overview>
-                    COMMAND_EXPAND_LISTS)
-            endif()
-        endif()
-        if (EXISTS ${EXAMPLES_DIR}/vx02_sim_controls.cpp)
-            add_executable(visual_vx02_sim_controls ${EXAMPLES_DIR}/vx02_sim_controls.cpp)
-            target_link_libraries(visual_vx02_sim_controls PRIVATE vulkan_visualizer libhinacloth)
-            target_compile_features(visual_vx02_sim_controls PRIVATE cxx_std_23)
-            hinacloth_apply_common_warnings(visual_vx02_sim_controls)
-            hinacloth_apply_release_opts(visual_vx02_sim_controls)
-            if (TARGET hinacloth_example_shaders)
-                add_dependencies(visual_vx02_sim_controls hinacloth_example_shaders)
-            endif()
-            target_compile_definitions(visual_vx02_sim_controls PRIVATE SHADER_OUTPUT_DIR="${HINA_SHADER_BIN_DIR}")
-            if (WIN32)
-                add_custom_command(TARGET visual_vx02_sim_controls POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        $<TARGET_RUNTIME_DLLS:visual_vx02_sim_controls>
-                        $<TARGET_FILE_DIR:visual_vx02_sim_controls>
-                    COMMAND_EXPAND_LISTS)
-            endif()
-        endif()
-    endif()
 endif()
 
 # =============================
@@ -253,7 +197,33 @@ if (HINA_SPV_FILES)
 endif()
 
 # =============================
-# Unit tests6
+# Visualizer example: compile vv cloth shaders for vx_* demos
+# =============================
+if (HINACLOTH_BUILD_EXAMPLES AND HINACLOTH_HAVE_VULKAN_VISUALIZER)
+    set(HINA_VV_SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vulkan-visualizer/examples/shaders)
+    set(HINA_VV_SHADER_BIN_DIR ${CMAKE_CURRENT_BINARY_DIR}/vulkan-visualizer_examples_shaders)
+    file(MAKE_DIRECTORY ${HINA_VV_SHADER_BIN_DIR})
+    set(HINA_VV_SHADER_LIST cloth.vert cloth.frag)
+    set(HINA_VV_SPV_FILES)
+    foreach(SH ${HINA_VV_SHADER_LIST})
+        set(SRC ${HINA_VV_SHADER_SRC_DIR}/${SH})
+        set(SPV ${HINA_VV_SHADER_BIN_DIR}/${SH}.spv)
+        if (HINA_GLSLC AND EXISTS ${SRC})
+            add_custom_command(OUTPUT ${SPV}
+                COMMAND ${HINA_GLSLC} -O -c ${SRC} -o ${SPV}
+                DEPENDS ${SRC}
+                COMMENT "[glslc] Compiling (vv) ${SH} -> ${SPV}"
+                VERBATIM)
+            list(APPEND HINA_VV_SPV_FILES ${SPV})
+        endif()
+    endforeach()
+    if (HINA_VV_SPV_FILES)
+        add_custom_target(hinacloth_vv_example_shaders DEPENDS ${HINA_VV_SPV_FILES})
+    endif()
+endif()
+
+# =============================
+# Unit tests
 # =============================
 enable_testing()
 file(GLOB_RECURSE HINACLOTH_TESTS_SRC
@@ -273,4 +243,26 @@ if (HINACLOTH_TESTS_SRC)
         target_compile_definitions(hinacloth_tests PRIVATE HINACLOTH_HAVE_AVX2=1)
     endif()
     add_test(NAME hinacloth_tests COMMAND hinacloth_tests)
+endif()
+
+# =============================
+# Visual XPBD example (vx_*) using Vulkan Visualizer
+# =============================
+if (HINACLOTH_BUILD_EXAMPLES AND HINACLOTH_HAVE_VULKAN_VISUALIZER)
+    set(VX_EXAMPLES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/examples)
+    if (EXISTS ${VX_EXAMPLES_DIR}/vx_xpbd_hina.cpp)
+        add_executable(vx_xpbd_hina ${VX_EXAMPLES_DIR}/vx_xpbd_hina.cpp)
+        # Reuse example flags, but also link vulkan_visualizer and define shader dir
+        _hina_setup_example(vx_xpbd_hina)
+        target_link_libraries(vx_xpbd_hina PRIVATE vulkan_visualizer)
+        target_compile_definitions(vx_xpbd_hina PRIVATE SHADER_OUTPUT_DIR="${HINA_VV_SHADER_BIN_DIR}")
+        if (TARGET hinacloth_vv_example_shaders)
+            add_dependencies(vx_xpbd_hina hinacloth_vv_example_shaders)
+        endif()
+        if (WIN32)
+            add_custom_command(TARGET vx_xpbd_hina POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_RUNTIME_DLLS:vx_xpbd_hina> $<TARGET_FILE_DIR:vx_xpbd_hina>
+                COMMAND_EXPAND_LISTS)
+        endif()
+    endif()
 endif()
