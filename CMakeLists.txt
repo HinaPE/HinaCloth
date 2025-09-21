@@ -179,7 +179,7 @@ endif()
 file(MAKE_DIRECTORY ${HINA_SHADER_BIN_DIR})
 find_program(HINA_GLSLC glslc HINTS ENV VULKAN_SDK PATH_SUFFIXES Bin bin)
 # Build shaders ONLY from examples/shader
-set(HINA_SHADER_LIST cloth.vert cloth.frag cloth_lit.vert cloth_lit.frag)
+set(HINA_SHADER_LIST cloth.vert cloth.frag cloth_lit.vert cloth_lit.frag shadow_depth.vert cloth_shadow.vert cloth_shadow.frag cloth_outline.vert cloth_outline.frag)
 set(HINA_SPV_FILES)
 foreach(SH ${HINA_SHADER_LIST})
     set(SRC ${HINA_SHADER_SRC_DIR}/${SH})
