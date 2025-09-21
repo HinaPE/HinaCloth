@@ -68,6 +68,11 @@ public:
         sim::Status st = sim::copy_positions(solver_, cpu_pos_.data(), node_count_, &outCount);
         if (st == sim::Status::Ok && outCount >= node_count_) {
             std::memcpy(pos_buf_.mapped, cpu_pos_.data(), node_count_*sizeof(vv::float3));
+            // compute and upload normals
+            std::vector<float> cpu_normals; cpu_normals.reserve(cpu_pos_.size());
+            compute_normals_(cpu_normals);
+            if (!nrm_buf_.buf || nrm_buf_.size < node_count_*sizeof(vv::float3)) { destroy_buffer_(nrm_buf_); create_buffer_(node_count_*sizeof(vv::float3), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO, true, nrm_buf_); }
+            if (nrm_buf_.mapped && !cpu_normals.empty()) std::memcpy(nrm_buf_.mapped, cpu_normals.data(), node_count_*sizeof(vv::float3));
         }
     }
 
@@ -91,28 +96,32 @@ public:
         const vv::float4x4 V = cam_.view_matrix(); const vv::float4x4 P = cam_.proj_matrix(); vv::float4x4 MVP = vv::mul(P, V);
         struct PC { float mvp[16]; float color[4]; float pointSize; float _pad[3]; } pc{};
         std::memcpy(pc.mvp, MVP.m.data(), sizeof(pc.mvp));
-        VkDeviceSize offs = 0; vkCmdBindVertexBuffers(cmd, 0, 1, &pos_buf_.buf, &offs);
-        // Draw mesh (triangles)
+        // Draw mesh (triangles) with lighting
         if (params_.show_mesh){
-            pc.color[0]=0.55f; pc.color[1]=0.7f; pc.color[2]=0.95f; pc.color[3]=1.0f; pc.pointSize = params_.point_size;
+            pc.color[0]=0.75f; pc.color[1]=0.82f; pc.color[2]=0.95f; pc.color[3]=1.0f; pc.pointSize = params_.point_size;
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_tri_.pipeline);
-            vkCmdPushConstants(cmd, pipe_tri_.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PC), &pc);
+            vkCmdPushConstants(cmd, pipe_tri_.layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PC), &pc);
+            VkBuffer bufs[2] = { pos_buf_.buf, nrm_buf_.buf }; VkDeviceSize offs[2] = { 0, 0 };
+            vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
             vkCmdBindIndexBuffer(cmd, tri_idx_.buf, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexed(cmd, tri_count_, 1, 0, 0, 0);
         }
-        // Draw constraints (lines)
-        if (params_.show_constraints && line_idx_count_>0){
-            pc.color[0]=0.9f; pc.color[1]=0.9f; pc.color[2]=0.9f; pc.color[3]=1.0f; pc.pointSize = params_.point_size;
+        // Draw constraints (lines) with per-type colors
+        if (params_.show_constraints){
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_line_.pipeline);
-            vkCmdPushConstants(cmd, pipe_line_.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PC), &pc);
-            vkCmdBindIndexBuffer(cmd, line_idx_.buf, 0, VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(cmd, line_idx_count_, 1, 0, 0, 0);
+            // structural: light gray
+            pc.color[0]=0.85f; pc.color[1]=0.85f; pc.color[2]=0.85f; pc.color[3]=1.0f; vkCmdPushConstants(cmd, pipe_line_.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PC), &pc);
+            if (line_struct_count_>0){ VkDeviceSize off0 = 0; vkCmdBindVertexBuffers(cmd, 0, 1, &pos_buf_.buf, &off0); vkCmdBindIndexBuffer(cmd, line_struct_idx_.buf, 0, VK_INDEX_TYPE_UINT32); vkCmdDrawIndexed(cmd, line_struct_count_, 1, 0, 0, 0); }
+            // shear: cyan
+            pc.color[0]=0.6f; pc.color[1]=0.9f; pc.color[2]=1.0f; pc.color[3]=1.0f; vkCmdPushConstants(cmd, pipe_line_.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PC), &pc);
+            if (line_shear_count_>0){ VkDeviceSize off1 = 0; vkCmdBindVertexBuffers(cmd, 0, 1, &pos_buf_.buf, &off1); vkCmdBindIndexBuffer(cmd, line_shear_idx_.buf, 0, VK_INDEX_TYPE_UINT32); vkCmdDrawIndexed(cmd, line_shear_count_, 1, 0, 0, 0); }
         }
         // Draw vertices (points)
         if (params_.show_vertices){
             pc.color[0]=1.0f; pc.color[1]=1.0f; pc.color[2]=1.0f; pc.color[3]=1.0f; pc.pointSize = params_.point_size;
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_point_.pipeline);
             vkCmdPushConstants(cmd, pipe_point_.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PC), &pc);
+            VkDeviceSize offp = 0; vkCmdBindVertexBuffers(cmd, 0, 1, &pos_buf_.buf, &offp);
             vkCmdDraw(cmd, node_count_, 1, 0, 0);
         }
         vkCmdEndRendering(cmd);
@@ -158,8 +167,10 @@ private:
     // GPU buffers
     struct GpuBuffer { VkBuffer buf{}; VmaAllocation alloc{}; void* mapped{}; size_t size{}; };
     GpuBuffer pos_buf_{}; // vec3 positions
+    GpuBuffer nrm_buf_{}; // vec3 normals
     GpuBuffer tri_idx_{}; uint32_t tri_count_{0};
-    GpuBuffer line_idx_{}; uint32_t line_idx_count_{0};
+    GpuBuffer line_struct_idx_{}; uint32_t line_struct_count_{0};
+    GpuBuffer line_shear_idx_{};  uint32_t line_shear_count_{0};
 
     struct Pipeline { VkPipeline pipeline{}; VkPipelineLayout layout{}; };
     Pipeline pipe_tri_{}, pipe_line_{}, pipe_point_{};
@@ -167,26 +178,121 @@ private:
     double sim_accum_{0.0};
 
 private:
-    void build_sim_(){
-        // Default grid
-        rebuild_grid_(params_.grid_x, params_.grid_y, params_.spacing);
+    // Compute per-vertex normals (area-weighted)
+    void compute_normals_(std::vector<float>& out_normals){
+        out_normals.assign(3u*node_count_, 0.0f);
+        auto accum = [&](uint32_t a, uint32_t b, uint32_t c){
+            float ax = cpu_pos_[3u*a+0], ay = cpu_pos_[3u*a+1], az = cpu_pos_[3u*a+2];
+            float bx = cpu_pos_[3u*b+0], by = cpu_pos_[3u*b+1], bz = cpu_pos_[3u*b+2];
+            float cx = cpu_pos_[3u*c+0], cy = cpu_pos_[3u*c+1], cz = cpu_pos_[3u*c+2];
+            float ux = bx-ax, uy = by-ay, uz = bz-az;
+            float vx = cx-ax, vy = cy-ay, vz = cz-az;
+            float nx = uy*vz - uz*vy;
+            float ny = uz*vx - ux*vz;
+            float nz = ux*vy - uy*vx;
+            out_normals[3u*a+0]+=nx; out_normals[3u*a+1]+=ny; out_normals[3u*a+2]+=nz;
+            out_normals[3u*b+0]+=nx; out_normals[3u*b+1]+=ny; out_normals[3u*b+2]+=nz;
+            out_normals[3u*c+0]+=nx; out_normals[3u*c+1]+=ny; out_normals[3u*c+2]+=nz;
+        };
+        // walk triangles
+        if (tri_idx_.mapped && tri_count_>=3){
+            const uint32_t* idx = static_cast<const uint32_t*>(tri_idx_.mapped);
+            for (uint32_t i=0; i+2<tri_count_; i+=3){ accum(idx[i+0], idx[i+1], idx[i+2]); }
+        }
+        // normalize
+        for(uint32_t i=0;i<node_count_;++i){
+            float nx = out_normals[3u*i+0], ny = out_normals[3u*i+1], nz = out_normals[3u*i+2];
+            float len = std::sqrt(nx*nx+ny*ny+nz*nz) + 1e-20f;
+            out_normals[3u*i+0] = nx/len; out_normals[3u*i+1] = ny/len; out_normals[3u*i+2] = nz/len;
+        }
     }
 
+    void rebuild_indices_(){
+        // triangles
+        std::vector<uint32_t> idx; idx.reserve((nx_-1)*(ny_-1)*6);
+        auto id = [&](int x,int y){ return (uint32_t)(y*nx_ + x); };
+        for(uint32_t y=0;y<ny_-1;++y){ for(uint32_t x=0;x<nx_-1;++x){ uint32_t a=id(x,y), b=id(x+1,y), c=id(x,y+1), d=id(x+1,y+1); idx.push_back(a); idx.push_back(b); idx.push_back(d); idx.push_back(a); idx.push_back(d); idx.push_back(c);} }
+        tri_count_ = (uint32_t)idx.size();
+        if (!tri_idx_.buf) create_buffer_(idx.size()*sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO, true, tri_idx_);
+        else if (tri_idx_.size < idx.size()*sizeof(uint32_t)) { destroy_buffer_(tri_idx_); create_buffer_(idx.size()*sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO, true, tri_idx_); }
+        if (!idx.empty()) std::memcpy(tri_idx_.mapped, idx.data(), idx.size()*sizeof(uint32_t));
+        // line sets: structural (H/V) and shear (diagonals)
+        std::vector<uint32_t> Ls; Ls.reserve(nx_*ny_*2);
+        std::vector<uint32_t> Ld; Ld.reserve(nx_*ny_*2);
+        for(uint32_t j=0;j<ny_;++j){ for(uint32_t i=0;i+1<nx_;++i){ uint32_t a=id(i,j), b=id(i+1,j); Ls.push_back(a); Ls.push_back(b);} }
+        for(uint32_t j=0;j+1<ny_;++j){ for(uint32_t i=0;i<nx_;++i){ uint32_t a=id(i,j), b=id(i,j+1); Ls.push_back(a); Ls.push_back(b);} }
+        for(uint32_t j=0;j+1<ny_;++j){ for(uint32_t i=0;i+1<nx_;++i){ uint32_t a=id(i,j), b=id(i+1,j+1); Ld.push_back(a); Ld.push_back(b); uint32_t c=id(i+1,j), d=id(i,j+1); Ld.push_back(c); Ld.push_back(d);} }
+        line_struct_count_ = (uint32_t)Ls.size(); line_shear_count_ = (uint32_t)Ld.size();
+        if (!line_struct_idx_.buf) create_buffer_(Ls.size()*sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO, true, line_struct_idx_);
+        else if (line_struct_idx_.size < Ls.size()*sizeof(uint32_t)) { destroy_buffer_(line_struct_idx_); create_buffer_(Ls.size()*sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO, true, line_struct_idx_); }
+        if (!Ls.empty()) std::memcpy(line_struct_idx_.mapped, Ls.data(), Ls.size()*sizeof(uint32_t));
+        if (!line_shear_idx_.buf) create_buffer_(Ld.size()*sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO, true, line_shear_idx_);
+        else if (line_shear_idx_.size < Ld.size()*sizeof(uint32_t)) { destroy_buffer_(line_shear_idx_); create_buffer_(Ld.size()*sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO, true, line_shear_idx_); }
+        if (!Ld.empty()) std::memcpy(line_shear_idx_.mapped, Ld.data(), Ld.size()*sizeof(uint32_t));
+    }
+
+    void build_gpu_buffers_(){
+        if (!pos_buf_.buf) create_buffer_(node_count_*sizeof(vv::float3), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO, true, pos_buf_);
+        if (!nrm_buf_.buf) create_buffer_(node_count_*sizeof(vv::float3), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO, true, nrm_buf_);
+        rebuild_indices_();
+    }
+
+    void build_pipelines_(){
+        std::string dir(SHADER_OUTPUT_DIR);
+        // Triangles: lit
+        VkShaderModule vs_lit = make_shader(dev_, load_spv(dir+"/cloth_lit.vert.spv"));
+        VkShaderModule fs_lit = make_shader(dev_, load_spv(dir+"/cloth.frag.spv")); // reuse frag color (lighting will be in frag_lit; fallback to color)
+        // If cloth_lit.frag exists, prefer it
+        VkShaderModule fs_try{}; bool have_fs_lit=false;
+        try { auto b = load_spv(dir+"/cloth_lit.frag.spv"); fs_try = make_shader(dev_, b); have_fs_lit=true; } catch(...) {}
+        if (have_fs_lit) { vkDestroyShaderModule(dev_, fs_lit, nullptr); fs_lit = fs_try; }
+        VkPipelineShaderStageCreateInfo st_tri[2]{}; for(int i=0;i<2;++i) st_tri[i].sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; st_tri[0].stage=VK_SHADER_STAGE_VERTEX_BIT; st_tri[0].module=vs_lit; st_tri[0].pName="main"; st_tri[1]=st_tri[0]; st_tri[1].stage=VK_SHADER_STAGE_FRAGMENT_BIT; st_tri[1].module=fs_lit;
+        // Lines/points: basic
+        VkShaderModule vs_basic = make_shader(dev_, load_spv(dir+"/cloth.vert.spv"));
+        VkShaderModule fs_basic = make_shader(dev_, load_spv(dir+"/cloth.frag.spv"));
+        VkPipelineShaderStageCreateInfo st_basic[2]{}; for(int i=0;i<2;++i) st_basic[i].sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; st_basic[0].stage=VK_SHADER_STAGE_VERTEX_BIT; st_basic[0].module=vs_basic; st_basic[0].pName="main"; st_basic[1]=st_basic[0]; st_basic[1].stage=VK_SHADER_STAGE_FRAGMENT_BIT; st_basic[1].module=fs_basic;
+        // Vertex inputs
+        VkVertexInputBindingDescription bind_pos{0, sizeof(vv::float3), VK_VERTEX_INPUT_RATE_VERTEX};
+        VkVertexInputBindingDescription bind_nrm{1, sizeof(vv::float3), VK_VERTEX_INPUT_RATE_VERTEX};
+        VkVertexInputAttributeDescription attrs_tri[2] = { {0,0,VK_FORMAT_R32G32B32_SFLOAT,0}, {1,1,VK_FORMAT_R32G32B32_SFLOAT,0} };
+        VkPipelineVertexInputStateCreateInfo vi_tri{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO}; vi_tri.vertexBindingDescriptionCount=2; VkVertexInputBindingDescription binds_tri[2] = {bind_pos, bind_nrm}; vi_tri.pVertexBindingDescriptions=binds_tri; vi_tri.vertexAttributeDescriptionCount=2; vi_tri.pVertexAttributeDescriptions=attrs_tri;
+        VkPipelineVertexInputStateCreateInfo vi_basic{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO}; vi_basic.vertexBindingDescriptionCount=1; vi_basic.pVertexBindingDescriptions=&bind_pos; VkVertexInputAttributeDescription attr_pos{0,0,VK_FORMAT_R32G32B32_SFLOAT,0}; vi_basic.vertexAttributeDescriptionCount=1; vi_basic.pVertexAttributeDescriptions=&attr_pos;
+        VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO}; vp.viewportCount=1; vp.scissorCount=1;
+        VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO}; rs.polygonMode=VK_POLYGON_MODE_FILL; rs.cullMode=VK_CULL_MODE_NONE; rs.frontFace=VK_FRONT_FACE_COUNTER_CLOCKWISE; rs.lineWidth=1.0f;
+        VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO}; ms.rasterizationSamples=VK_SAMPLE_COUNT_1_BIT;
+        VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO}; ds.depthTestEnable=VK_TRUE; ds.depthWriteEnable=VK_TRUE; ds.depthCompareOp=VK_COMPARE_OP_LESS;
+        VkPipelineColorBlendAttachmentState ba{}; ba.colorWriteMask=0xF; VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO}; cb.attachmentCount=1; cb.pAttachments=&ba;
+        const VkDynamicState dyns[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR }; VkPipelineDynamicStateCreateInfo dsi{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO}; dsi.dynamicStateCount=2; dsi.pDynamicStates=dyns;
+        VkPushConstantRange pcr{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 96}; VkPipelineLayoutCreateInfo lci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO}; lci.pushConstantRangeCount=1; lci.pPushConstantRanges=&pcr; VK_CHECK(vkCreatePipelineLayout(dev_, &lci, nullptr, &pipe_tri_.layout)); pipe_line_.layout = pipe_tri_.layout; pipe_point_.layout = pipe_tri_.layout;
+        VkPipelineRenderingCreateInfo rinfo{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO}; rinfo.colorAttachmentCount=1; rinfo.pColorAttachmentFormats=&color_fmt_; rinfo.depthAttachmentFormat=depth_fmt_;
+        auto make_pipeline = [&](VkPrimitiveTopology topo, Pipeline& out, const VkPipelineShaderStageCreateInfo* st, const VkPipelineVertexInputStateCreateInfo* vi){ VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO}; ia.topology=topo; VkGraphicsPipelineCreateInfo pci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO}; pci.pNext=&rinfo; pci.stageCount=2; pci.pStages=st; pci.pVertexInputState=vi; pci.pInputAssemblyState=&ia; pci.pViewportState=&vp; pci.pRasterizationState=&rs; pci.pMultisampleState=&ms; pci.pDepthStencilState=&ds; pci.pColorBlendState=&cb; pci.pDynamicState=&dsi; pci.layout=pipe_tri_.layout; VK_CHECK(vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &pci, nullptr, &out.pipeline)); };
+        make_pipeline(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, pipe_tri_, st_tri, &vi_tri);
+        make_pipeline(VK_PRIMITIVE_TOPOLOGY_LINE_LIST, pipe_line_, st_basic, &vi_basic);
+        make_pipeline(VK_PRIMITIVE_TOPOLOGY_POINT_LIST, pipe_point_, st_basic, &vi_basic);
+        vkDestroyShaderModule(dev_, vs_lit, nullptr); vkDestroyShaderModule(dev_, fs_lit, nullptr); vkDestroyShaderModule(dev_, vs_basic, nullptr); vkDestroyShaderModule(dev_, fs_basic, nullptr);
+    }
+
+    void destroy_pipelines_(){ if (pipe_tri_.pipeline) vkDestroyPipeline(dev_, pipe_tri_.pipeline, nullptr); if (pipe_line_.pipeline) vkDestroyPipeline(dev_, pipe_line_.pipeline, nullptr); if (pipe_point_.pipeline) vkDestroyPipeline(dev_, pipe_point_.pipeline, nullptr); if (pipe_tri_.layout) vkDestroyPipelineLayout(dev_, pipe_tri_.layout, nullptr); pipe_tri_={}; pipe_line_={}; pipe_point_={}; }
+    void destroy_gpu_buffers_(){ destroy_buffer_(pos_buf_); destroy_buffer_(nrm_buf_); destroy_buffer_(tri_idx_); destroy_buffer_(line_struct_idx_); destroy_buffer_(line_shear_idx_); }
+
+private:
+    void build_sim_(){ rebuild_grid_(params_.grid_x, params_.grid_y, params_.spacing); }
     void reset_sim_(){ rebuild_grid_(nx_, ny_, dx_); }
 
     void rebuild_grid_(uint32_t nx, uint32_t ny, float dx){
         // Cleanup GPU and solver
         if (solver_) { sim::destroy(solver_); solver_ = nullptr; }
-        destroy_buffer_(tri_idx_); destroy_buffer_(line_idx_); // keep pos buffer; resize later if needed
+        destroy_buffer_(tri_idx_); destroy_buffer_(line_struct_idx_); destroy_buffer_(line_shear_idx_);
         // Build initial state arrays
         nx_ = std::max(2u, nx); ny_ = std::max(2u, ny); dx_ = dx; node_count_ = nx_*ny_;
         std::vector<float> pos(3u*node_count_), vel(3u*node_count_, 0.0f);
         for(uint32_t j=0;j<ny_;++j){ for(uint32_t i=0;i<nx_;++i){ uint32_t id=vid(i,j,nx_); pos[3u*id+0] = (float)i*dx_; pos[3u*id+1] = 0.8f; pos[3u*id+2] = (float)j*dx_; }}
-        // Relations: structural edges (H/V) + diagonals for nicer look
+        // Relations for visualization and solver (structural + diagonals)
         edges_.clear(); edges_.reserve(nx_*ny_*4);
-        for(uint32_t j=0;j<ny_;++j){ for(uint32_t i=0;i+1<nx_;++i){ uint32_t a=vid(i,j,nx_), b=vid(i+1,j,nx_); edges_.push_back(a); edges_.push_back(b);} }
-        for(uint32_t j=0;j+1<ny_;++j){ for(uint32_t i=0;i<nx_;++i){ uint32_t a=vid(i,j,nx_), b=vid(i,j+1,nx_); edges_.push_back(a); edges_.push_back(b);} }
-        for(uint32_t j=0;j+1<ny_;++j){ for(uint32_t i=0;i+1<nx_;++i){ uint32_t a=vid(i,j,nx_), b=vid(i+1,j+1,nx_); edges_.push_back(a); edges_.push_back(b); uint32_t c=vid(i+1,j,nx_), d=vid(i,j+1,nx_); edges_.push_back(c); edges_.push_back(d);} }
+        auto idf = [&](uint32_t i,uint32_t j){ return vid(i,j,nx_); };
+        for(uint32_t j=0;j<ny_;++j){ for(uint32_t i=0;i+1<nx_;++i){ edges_.push_back(idf(i,j)); edges_.push_back(idf(i+1,j)); }}
+        for(uint32_t j=0;j+1<ny_;++j){ for(uint32_t i=0;i<nx_;++i){ edges_.push_back(idf(i,j)); edges_.push_back(idf(i,j+1)); }}
+        for(uint32_t j=0;j+1<ny_;++j){ for(uint32_t i=0;i+1<nx_;++i){ edges_.push_back(idf(i,j)); edges_.push_back(idf(i+1,j+1)); edges_.push_back(idf(i+1,j)); edges_.push_back(idf(i,j+1)); }}
         // Build solver
         sim::FieldView fpos{"position", sim::FieldType::F32, pos.data(), node_count_, 3, sizeof(float)*3};
         sim::FieldView fvel{"velocity", sim::FieldType::F32, vel.data(), node_count_, 3, sizeof(float)*3};
@@ -213,68 +319,32 @@ private:
         sim::flush_commands(solver_, sim::ApplyPhase::BeforeFrame);
         // Prepare GPU buffers for indices and positions
         rebuild_indices_();
-        // Ensure pos buffer large enough
         if (!pos_buf_.buf || pos_buf_.size < node_count_*sizeof(vv::float3)) {
             destroy_buffer_(pos_buf_);
             create_buffer_(node_count_*sizeof(vv::float3), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO, true, pos_buf_);
         }
-        // Upload initial positions
+        if (!nrm_buf_.buf || nrm_buf_.size < node_count_*sizeof(vv::float3)) {
+            destroy_buffer_(nrm_buf_);
+            create_buffer_(node_count_*sizeof(vv::float3), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO, true, nrm_buf_);
+        }
+        // Upload initial positions and initial normals
         cpu_pos_.assign(pos.begin(), pos.end());
         if (pos_buf_.mapped) std::memcpy(pos_buf_.mapped, cpu_pos_.data(), node_count_*sizeof(vv::float3));
-    }
-
-    void rebuild_indices_(){
-        // triangles
-        std::vector<uint32_t> idx; idx.reserve((nx_-1)*(ny_-1)*6);
-        auto id = [&](int x,int y){ return (uint32_t)(y*nx_ + x); };
-        for(uint32_t y=0;y<ny_-1;++y){ for(uint32_t x=0;x<nx_-1;++x){ uint32_t a=id(x,y), b=id(x+1,y), c=id(x,y+1), d=id(x+1,y+1); idx.push_back(a); idx.push_back(b); idx.push_back(d); idx.push_back(a); idx.push_back(d); idx.push_back(c);} }
-        tri_count_ = (uint32_t)idx.size();
-        if (!tri_idx_.buf) create_buffer_(idx.size()*sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO, true, tri_idx_);
-        else if (tri_idx_.size < idx.size()*sizeof(uint32_t)) { destroy_buffer_(tri_idx_); create_buffer_(idx.size()*sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO, true, tri_idx_); }
-        if (!idx.empty()) std::memcpy(tri_idx_.mapped, idx.data(), idx.size()*sizeof(uint32_t));
-        // lines from edges_
-        line_idx_count_ = (uint32_t)edges_.size();
-        if (!line_idx_.buf) create_buffer_(edges_.size()*sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO, true, line_idx_);
-        else if (line_idx_.size < edges_.size()*sizeof(uint32_t)) { destroy_buffer_(line_idx_); create_buffer_(edges_.size()*sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO, true, line_idx_); }
-        if (!edges_.empty()) std::memcpy(line_idx_.mapped, edges_.data(), edges_.size()*sizeof(uint32_t));
+        std::vector<float> cpu_normals; cpu_normals.reserve(cpu_pos_.size()); compute_normals_(cpu_normals);
+        if (nrm_buf_.mapped && !cpu_normals.empty()) std::memcpy(nrm_buf_.mapped, cpu_normals.data(), node_count_*sizeof(vv::float3));
     }
 
     void frame_scene_to_positions_(){
-        if (node_count_==0) return; vv::float3 mn{cpu_pos_[0], cpu_pos_[1], cpu_pos_[2]}, mx=mn; for(uint32_t i=0;i<node_count_;++i){ float x=cpu_pos_[3*i+0], y=cpu_pos_[3*i+1], z=cpu_pos_[3*i+2]; mn.x=std::min(mn.x,x); mn.y=std::min(mn.y,y); mn.z=std::min(mn.z,z); mx.x=std::max(mx.x,x); mx.y=std::max(mx.y,y); mx.z=std::max(mx.z,z);} mn.z-=0.2f; mx.z+=0.2f; cam_.set_scene_bounds(vv::BoundingBox{.min=mn,.max=mx,.valid=true}); cam_.frame_scene(1.12f);
+        if (node_count_==0 || cpu_pos_.empty()) return; vv::float3 mn{cpu_pos_[0], cpu_pos_[1], cpu_pos_[2]}, mx=mn; for(uint32_t i=0;i<node_count_;++i){ float x=cpu_pos_[3*i+0], y=cpu_pos_[3*i+1], z=cpu_pos_[3*i+2]; mn.x=std::min(mn.x,x); mn.y=std::min(mn.y,y); mn.z=std::min(mn.z,z); mx.x=std::max(mx.x,x); mx.y=std::max(mx.y,y); mx.z=std::max(mx.z,z);} mn.z-=0.2f; mx.z+=0.2f; cam_.set_scene_bounds(vv::BoundingBox{.min=mn,.max=mx,.valid=true}); cam_.frame_scene(1.12f);
     }
 
-    // GPU helpers
+    // GPU buffer helpers
     void create_buffer_(VkDeviceSize sz, VkBufferUsageFlags usage, VmaMemoryUsage memUsage, bool mapped, GpuBuffer& out){
         VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO}; bi.size=sz; bi.usage=usage; bi.sharingMode=VK_SHARING_MODE_EXCLUSIVE;
         VmaAllocationCreateInfo ai{}; ai.usage = memUsage; ai.flags = mapped? VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT : 0;
         VK_CHECK(vmaCreateBuffer(eng_.allocator, &bi, &ai, &out.buf, &out.alloc, nullptr)); out.size=(size_t)sz; out.mapped=nullptr; if (mapped) { vmaMapMemory(eng_.allocator, out.alloc, &out.mapped); }
     }
     void destroy_buffer_(GpuBuffer& b){ if (b.mapped) { vmaUnmapMemory(eng_.allocator, b.alloc); b.mapped=nullptr; } if (b.buf) vmaDestroyBuffer(eng_.allocator, b.buf, b.alloc); b = {}; }
-
-    void build_gpu_buffers_(){ if (!pos_buf_.buf) create_buffer_(node_count_*sizeof(vv::float3), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO, true, pos_buf_); rebuild_indices_(); }
-
-    void build_pipelines_(){
-        std::string dir(SHADER_OUTPUT_DIR); VkShaderModule vs = make_shader(dev_, load_spv(dir+"/cloth.vert.spv")); VkShaderModule fs = make_shader(dev_, load_spv(dir+"/cloth.frag.spv"));
-        VkPipelineShaderStageCreateInfo st[2]{}; for(int i=0;i<2;++i) st[i].sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; st[0].stage=VK_SHADER_STAGE_VERTEX_BIT; st[0].module=vs; st[0].pName="main"; st[1]=st[0]; st[1].stage=VK_SHADER_STAGE_FRAGMENT_BIT; st[1].module=fs;
-        VkVertexInputBindingDescription bind{0, sizeof(vv::float3), VK_VERTEX_INPUT_RATE_VERTEX}; VkVertexInputAttributeDescription attr{0,0,VK_FORMAT_R32G32B32_SFLOAT,0};
-        VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO}; vi.vertexBindingDescriptionCount=1; vi.pVertexBindingDescriptions=&bind; vi.vertexAttributeDescriptionCount=1; vi.pVertexAttributeDescriptions=&attr;
-        VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO}; vp.viewportCount=1; vp.scissorCount=1;
-        VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO}; rs.polygonMode=VK_POLYGON_MODE_FILL; rs.cullMode=VK_CULL_MODE_NONE; rs.frontFace=VK_FRONT_FACE_COUNTER_CLOCKWISE; rs.lineWidth=1.0f;
-        VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO}; ms.rasterizationSamples=VK_SAMPLE_COUNT_1_BIT;
-        VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO}; ds.depthTestEnable=VK_TRUE; ds.depthWriteEnable=VK_TRUE; ds.depthCompareOp=VK_COMPARE_OP_LESS;
-        VkPipelineColorBlendAttachmentState ba{}; ba.colorWriteMask=0xF; VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO}; cb.attachmentCount=1; cb.pAttachments=&ba;
-        const VkDynamicState dyns[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR }; VkPipelineDynamicStateCreateInfo dsi{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO}; dsi.dynamicStateCount=2; dsi.pDynamicStates=dyns;
-        VkPushConstantRange pcr{VK_SHADER_STAGE_VERTEX_BIT, 0, 96}; VkPipelineLayoutCreateInfo lci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO}; lci.pushConstantRangeCount=1; lci.pPushConstantRanges=&pcr; VK_CHECK(vkCreatePipelineLayout(dev_, &lci, nullptr, &pipe_tri_.layout)); pipe_line_.layout = pipe_tri_.layout; pipe_point_.layout = pipe_tri_.layout;
-        VkPipelineRenderingCreateInfo rinfo{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO}; rinfo.colorAttachmentCount=1; rinfo.pColorAttachmentFormats=&color_fmt_; rinfo.depthAttachmentFormat=depth_fmt_;
-        auto make_pipeline = [&](VkPrimitiveTopology topo, Pipeline& out){ VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO}; ia.topology=topo; VkGraphicsPipelineCreateInfo pci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO}; pci.pNext=&rinfo; pci.stageCount=2; pci.pStages=st; pci.pVertexInputState=&vi; pci.pInputAssemblyState=&ia; pci.pViewportState=&vp; pci.pRasterizationState=&rs; pci.pMultisampleState=&ms; pci.pDepthStencilState=&ds; pci.pColorBlendState=&cb; pci.pDynamicState=&dsi; pci.layout=pipe_tri_.layout; VK_CHECK(vkCreateGraphicsPipelines(dev_, VK_NULL_HANDLE, 1, &pci, nullptr, &out.pipeline)); };
-        make_pipeline(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, pipe_tri_);
-        make_pipeline(VK_PRIMITIVE_TOPOLOGY_LINE_LIST, pipe_line_);
-        make_pipeline(VK_PRIMITIVE_TOPOLOGY_POINT_LIST, pipe_point_);
-        vkDestroyShaderModule(dev_, vs, nullptr); vkDestroyShaderModule(dev_, fs, nullptr);
-    }
-
-    void destroy_pipelines_(){ if (pipe_tri_.pipeline) vkDestroyPipeline(dev_, pipe_tri_.pipeline, nullptr); if (pipe_line_.pipeline) vkDestroyPipeline(dev_, pipe_line_.pipeline, nullptr); if (pipe_point_.pipeline) vkDestroyPipeline(dev_, pipe_point_.pipeline, nullptr); if (pipe_tri_.layout) vkDestroyPipelineLayout(dev_, pipe_tri_.layout, nullptr); pipe_tri_={}; pipe_line_={}; pipe_point_={}; }
-    void destroy_gpu_buffers_(){ destroy_buffer_(pos_buf_); destroy_buffer_(tri_idx_); destroy_buffer_(line_idx_); }
 };
 
 int main(){ try{ VulkanEngine e; e.configure_window(1280, 720, "vx_xpbd_hina"); e.set_renderer(std::make_unique<HinaXPBDRenderer>()); e.init(); e.run(); e.cleanup(); } catch(const std::exception& ex){ std::fprintf(stderr, "Fatal: %s\n", ex.what()); return 1; } return 0; }

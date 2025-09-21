@@ -178,7 +178,8 @@ endif()
 # =============================
 file(MAKE_DIRECTORY ${HINA_SHADER_BIN_DIR})
 find_program(HINA_GLSLC glslc HINTS ENV VULKAN_SDK PATH_SUFFIXES Bin bin)
-set(HINA_SHADER_LIST cloth_lines.vert cloth_lines.frag)
+# Build shaders ONLY from examples/shader
+set(HINA_SHADER_LIST cloth.vert cloth.frag cloth_lit.vert cloth_lit.frag)
 set(HINA_SPV_FILES)
 foreach(SH ${HINA_SHADER_LIST})
     set(SRC ${HINA_SHADER_SRC_DIR}/${SH})
@@ -194,32 +195,6 @@ foreach(SH ${HINA_SHADER_LIST})
 endforeach()
 if (HINA_SPV_FILES)
     add_custom_target(hinacloth_example_shaders ALL DEPENDS ${HINA_SPV_FILES})
-endif()
-
-# =============================
-# Visualizer example: compile vv cloth shaders for vx_* demos
-# =============================
-if (HINACLOTH_BUILD_EXAMPLES AND HINACLOTH_HAVE_VULKAN_VISUALIZER)
-    set(HINA_VV_SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vulkan-visualizer/examples/shaders)
-    set(HINA_VV_SHADER_BIN_DIR ${CMAKE_CURRENT_BINARY_DIR}/vulkan-visualizer_examples_shaders)
-    file(MAKE_DIRECTORY ${HINA_VV_SHADER_BIN_DIR})
-    set(HINA_VV_SHADER_LIST cloth.vert cloth.frag)
-    set(HINA_VV_SPV_FILES)
-    foreach(SH ${HINA_VV_SHADER_LIST})
-        set(SRC ${HINA_VV_SHADER_SRC_DIR}/${SH})
-        set(SPV ${HINA_VV_SHADER_BIN_DIR}/${SH}.spv)
-        if (HINA_GLSLC AND EXISTS ${SRC})
-            add_custom_command(OUTPUT ${SPV}
-                COMMAND ${HINA_GLSLC} -O -c ${SRC} -o ${SPV}
-                DEPENDS ${SRC}
-                COMMENT "[glslc] Compiling (vv) ${SH} -> ${SPV}"
-                VERBATIM)
-            list(APPEND HINA_VV_SPV_FILES ${SPV})
-        endif()
-    endforeach()
-    if (HINA_VV_SPV_FILES)
-        add_custom_target(hinacloth_vv_example_shaders DEPENDS ${HINA_VV_SPV_FILES})
-    endif()
 endif()
 
 # =============================
@@ -252,12 +227,12 @@ if (HINACLOTH_BUILD_EXAMPLES AND HINACLOTH_HAVE_VULKAN_VISUALIZER)
     set(VX_EXAMPLES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/examples)
     if (EXISTS ${VX_EXAMPLES_DIR}/vx_xpbd_hina.cpp)
         add_executable(vx_xpbd_hina ${VX_EXAMPLES_DIR}/vx_xpbd_hina.cpp)
-        # Reuse example flags, but also link vulkan_visualizer and define shader dir
         _hina_setup_example(vx_xpbd_hina)
         target_link_libraries(vx_xpbd_hina PRIVATE vulkan_visualizer)
-        target_compile_definitions(vx_xpbd_hina PRIVATE SHADER_OUTPUT_DIR="${HINA_VV_SHADER_BIN_DIR}")
-        if (TARGET hinacloth_vv_example_shaders)
-            add_dependencies(vx_xpbd_hina hinacloth_vv_example_shaders)
+        # Point renderer to our example shaders output dir
+        target_compile_definitions(vx_xpbd_hina PRIVATE SHADER_OUTPUT_DIR="${HINA_SHADER_BIN_DIR}")
+        if (TARGET hinacloth_example_shaders)
+            add_dependencies(vx_xpbd_hina hinacloth_example_shaders)
         endif()
         if (WIN32)
             add_custom_command(TARGET vx_xpbd_hina POST_BUILD
