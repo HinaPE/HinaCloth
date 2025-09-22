@@ -97,3 +97,11 @@ if (HINACLOTH_WITH_TBB)
     use_tbb(libhinacloth)
     target_compile_definitions(libhinacloth PUBLIC HINACLOTH_HAVE_TBB=1)
 endif()
+
+# -----------------------------------------------------------------------------
+# Tests
+# -----------------------------------------------------------------------------
+include(CTest)
+if (BUILD_TESTING)
+    add_subdirectory(test)
+endif()
