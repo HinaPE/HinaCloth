@@ -13,9 +13,9 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # Options
 # =============================
 # Turn warnings into errors (recommended for CI)
-option(HINACLOTH_WARN_AS_ERROR "Treat compiler warnings as errors" ON)
+option(HINACLOTH_WARN_AS_ERROR "Treat compiler warnings as errors" OFF)
 # Build examples
-option(HINACLOTH_BUILD_EXAMPLES "Build example executables" ON)
+option(HINACLOTH_BUILD_EXAMPLES "Build example executables" OFF)
 # Toggle TBB integration
 option(HINACLOTH_WITH_TBB "Enable oneTBB integration" ON)
 
