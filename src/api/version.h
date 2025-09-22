@@ -1,3 +1,7 @@
+/*
+ * File: version.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_VERSION_H
 #define HINACLOTH_VERSION_H
 
@@ -8,4 +12,4 @@ namespace sim
     static constexpr int VersionPatch = 0;
 }
 
-#endif //HINACLOTH_VERSION_H
+#endif

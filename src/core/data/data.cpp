@@ -82,7 +82,6 @@ namespace sim {
             size_t nb = (npos + (size_t)blk - 1) / (size_t)blk;
             d->pos_aosoa.assign(3u * (size_t)blk * nb, 0.0f);
         }
-        // Stage 4 init: operators disabled by default, attachment arrays zero
         d->op_enable_attachment = false;
         d->op_enable_bending    = false;
         d->attach_w.assign(npos, 0.0f);
@@ -95,7 +94,6 @@ namespace sim {
         for (size_t i = 0; i < count; i++) {
             auto& c = cmds[i];
             if (c.tag == CommandTag::SetParam && c.data && c.bytes >= sizeof(const char*) + sizeof(float)) {
-                // payload layout: struct { const char* name; float value; }
                 const char* name = *(const char* const*) c.data;
                 const float* v   = (const float*) ((const char*) c.data + sizeof(const char*));
                 if (name && v) {
@@ -183,10 +181,9 @@ namespace sim {
             d->attach_w  = oldd.attach_w;
             d->attach_tx = oldd.attach_tx; d->attach_ty = oldd.attach_ty; d->attach_tz = oldd.attach_tz;
         }
-        d->lambda_edge = oldd.lambda_edge; // will be resized to model in adapter after rebuild
+        d->lambda_edge = oldd.lambda_edge;
         d->gx = oldd.gx; d->gy = oldd.gy; d->gz = oldd.gz;
         d->distance_compliance = oldd.distance_compliance;
-        // per-edge compliance/alpha will be resized to new edge count after rebuild
         d->distance_compliance_edge.clear();
         d->distance_alpha_edge.clear();
         d->solve_substeps   = oldd.solve_substeps;

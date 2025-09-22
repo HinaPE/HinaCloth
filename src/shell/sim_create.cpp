@@ -51,7 +51,6 @@ namespace sim {
         s->tf.structural_rebuilds = 0;
         s->tf.solve_substeps      = cfg.policy.solve.substeps > 0 ? cfg.policy.solve.substeps : 1;
         s->tf.solve_iterations    = cfg.policy.solve.iterations > 0 ? cfg.policy.solve.iterations : 8;
-        // Query actual chosen from engine
         Chosen actual{};
         if (engine_query_chosen(s->e, actual)) s->chosen = actual;
         else s->chosen = choose_from_policy(cfg);

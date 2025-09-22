@@ -1,3 +1,7 @@
+/*
+ * File: topology_in.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_TOPOLOGY_IN_H
 #define HINACLOTH_TOPOLOGY_IN_H
 #include <cstdint>
@@ -19,4 +23,4 @@ namespace sim
         size_t relation_count;
     };
 }
-#endif //HINACLOTH_TOPOLOGY_IN_H
+#endif

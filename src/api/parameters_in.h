@@ -1,3 +1,7 @@
+/*
+ * File: parameters_in.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_PARAMETERS_IN_H
 #define HINACLOTH_PARAMETERS_IN_H
 #include <cstdint>
@@ -84,4 +88,4 @@ namespace sim
         size_t count;
     };
 }
-#endif //HINACLOTH_PARAMETERS_IN_H
+#endif

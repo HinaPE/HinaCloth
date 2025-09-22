@@ -1,3 +1,7 @@
+/*
+ * File: operators_in.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_OPERATORS_IN_H
 #define HINACLOTH_OPERATORS_IN_H
 #include <cstddef>
@@ -30,4 +34,4 @@ namespace sim
     };
 }
 
-#endif //HINACLOTH_OPERATORS_IN_H
+#endif

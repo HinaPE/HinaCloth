@@ -1,3 +1,7 @@
+/*
+ * File: capability.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_CAPABILITY_H
 #define HINACLOTH_CAPABILITY_H
 #include <cstddef>
@@ -15,4 +19,4 @@ namespace sim
     size_t enumerate_capabilities(Capability* out, size_t cap);
 }
 
-#endif //HINACLOTH_CAPABILITY_H
+#endif

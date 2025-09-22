@@ -13,9 +13,6 @@
 #include <vector>
 
 namespace sim {
-    // API-facing forward declarations (implemented in shell)
-    // struct Chosen; // from api/chosen.h
-    // cache tracker (shell)
     [[nodiscard]] bool shell_cache_query(uint64_t& key_out);
     [[nodiscard]] bool shell_cache_load(uint64_t key, Model*& out);
     void shell_cache_store(uint64_t key, const Model& m);
@@ -24,7 +21,6 @@ namespace sim {
 namespace sim {
     using namespace eng;
 
-    // Map engine Status to API Status
     static inline ::sim::Status to_api_status(eng::Status s) {
         switch (s) {
             case eng::Status::Ok:              return ::sim::Status::Ok;
@@ -39,7 +35,6 @@ namespace sim {
         }
     }
 
-    // Mapping helpers between API (shell) and engine types
     static inline eng::PolicyExec map_policy_exec(const ::sim::PolicyExec& a) {
         eng::PolicyExec e{}; e.layout = (eng::DataLayout)a.layout; e.backend = (eng::Backend)a.backend; e.threads = a.threads; e.deterministic = a.deterministic; e.telemetry = a.telemetry; return e;
     }
@@ -48,7 +43,6 @@ namespace sim {
     }
     static inline eng::BuildDesc map_build_desc(const ::sim::BuildDesc& a) {
         eng::BuildDesc b{};
-        // shallow views copy
         b.state.fields = reinterpret_cast<const eng::FieldView*>(a.state.fields); b.state.field_count = a.state.field_count;
         b.params.items = reinterpret_cast<const eng::Param*>(a.params.items); b.params.count = a.params.count;
         b.topo.node_count = a.topo.node_count; b.topo.relations = reinterpret_cast<const eng::RelationView*>(a.topo.relations); b.topo.relation_count = a.topo.relation_count;
@@ -85,7 +79,6 @@ namespace sim {
         e->applied  = 0;
         e->rebuilds = 0;
         Model* m    = nullptr;
-        // Try model cache first
         uint64_t key = 0;
         bool have_key = shell_cache_query(key);
         if (have_key) {
@@ -121,7 +114,6 @@ namespace sim {
             return nullptr;
         }
         e->chosen = ch;
-        // Propagate chosen backend/layout into Data
         if (d) {
             d->exec_use_avx2       = (ch.backend == eng::Backend::AVX2);
             d->exec_use_tbb        = (ch.backend == eng::Backend::TBB);

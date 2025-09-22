@@ -1,3 +1,7 @@
+/*
+ * File: policy_in.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_POLICY_IN_H
 #define HINACLOTH_POLICY_IN_H
 
@@ -33,4 +37,4 @@ namespace sim
     };
 }
 
-#endif //HINACLOTH_POLICY_IN_H
+#endif

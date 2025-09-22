@@ -1,3 +1,7 @@
+/*
+ * File: step_eng.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_STEP_ENG_H
 #define HINACLOTH_STEP_ENG_H
 #include "core/common/types.h"
@@ -11,5 +15,4 @@ namespace sim { namespace eng {
     Status runtime_step(const ::sim::Model& m, ::sim::Data& d, float dt, const SolveOverrides* ovr, TelemetryFrame* out);
 }}
 
-#endif // HINACLOTH_STEP_ENG_H
-
+#endif

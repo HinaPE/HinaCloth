@@ -17,7 +17,6 @@ namespace sim {
 
     static void update_rebuild_telemetry(Solver* s, double ms) {
         s->tf.last_rebuild_ms = ms;
-        // simple running average
         if (s->rebuilds == 0) s->tf.avg_rebuild_ms = ms;
         else s->tf.avg_rebuild_ms = 0.9 * s->tf.avg_rebuild_ms + 0.1 * ms;
     }

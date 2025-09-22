@@ -149,7 +149,7 @@ namespace sim { namespace eng {
         if (m.bend_pairs.empty() || m.bend_rest_angle.empty()) return;
         SoAView3 pos{}; storage_bind_soa(pos, d.px.data(), d.py.data(), d.pz.data(), d.px.size());
         const unsigned int* quads = reinterpret_cast<const unsigned int*>(m.bend_pairs.data());
-        kernel_bending_project(quads, m.bend_rest_angle.size(), pos, m.bend_rest_angle.data(), d.inv_mass.empty() ? nullptr : d.inv_mass.data(), iterations, /*alpha*/0.0f, dt);
+        kernel_bending_project(quads, m.bend_rest_angle.size(), pos, m.bend_rest_angle.data(), d.inv_mass.empty() ? nullptr : d.inv_mass.data(), iterations, 0.0f, dt);
     }
 
     static void finalize(Data& d, float dt, float damping) {
@@ -236,4 +236,3 @@ namespace sim { namespace eng {
         return Status::Ok;
     }
 }}
-

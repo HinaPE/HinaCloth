@@ -1,10 +1,13 @@
+/*
+ * File: types.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_ENGINE_TYPES_H
 #define HINACLOTH_ENGINE_TYPES_H
 #include <cstddef>
 #include <cstdint>
 
 namespace sim { namespace eng {
-    // Status used internally by engine
     enum class Status {
         Ok,
         InvalidArgs,
@@ -16,7 +19,6 @@ namespace sim { namespace eng {
         Busy
     };
 
-    // Telemetry frame
     struct TelemetryFrame {
         double   step_ms{};
         double   residual_avg{};
@@ -28,7 +30,6 @@ namespace sim { namespace eng {
         int      solve_iterations{};
     };
 
-    // Layout / Backend / Policy
     enum class DataLayout { Auto, SoA, AoS, Blocked };
     enum class Backend { Auto, Native, AVX2, TBB, GPU };
     enum class TimeStepper { Auto, Symplectic, SemiImplicit, Explicit };
@@ -47,14 +48,12 @@ namespace sim { namespace eng {
         TimeStepper stepper{TimeStepper::Auto};
     };
 
-    // Capability (engine-internal)
     struct Capability {
         Backend backend;
         DataLayout layout;
         const char* name;
     };
 
-    // Params
     enum class ParamType { F32, I32, U32, BOOL, VEC2, VEC3, VEC4, MAT3, MAT4, STRING, BLOB };
     struct ParamVec2 { float x, y; };
     struct ParamVec3 { float x, y, z; };
@@ -71,23 +70,20 @@ namespace sim { namespace eng {
     struct Param { const char* name; ParamType type; ParamValue value; };
     struct Parameters { const Param* items; size_t count; };
 
-    // State views
     enum class FieldType { F32, I32, U32 };
     struct FieldView {
         const char* name; FieldType type; const void* data; size_t count; size_t components; size_t stride_bytes;
     };
     struct StateInit { const FieldView* fields; size_t field_count; };
 
-    // Topology
     struct RelationView { const uint32_t* indices; size_t arity; size_t count; const char* tag; };
     struct TopologyIn { uint32_t node_count; const RelationView* relations; size_t relation_count; };
 
-    // Build desc (engine-facing)
     enum class ValidateLevel { Strict, Tolerant };
     struct PackOptions { bool lazy_pack{false}; int block_size{0}; };
-    struct SpaceDesc { int dummy{0}; }; // placeholder; engine side currently unused
-    struct OperatorsDecl { int dummy{0}; }; // placeholder; engine side currently unused
-    struct EventsScript { int dummy{0}; }; // placeholder; engine side currently unused
+    struct SpaceDesc { int dummy{0}; };
+    struct OperatorsDecl { int dummy{0}; };
+    struct EventsScript { int dummy{0}; };
     struct Policy { PolicyExec exec; PolicySolve solve; };
 
     struct BuildDesc {
@@ -102,17 +98,13 @@ namespace sim { namespace eng {
         PackOptions pack{};
     };
 
-    // Commands
     enum class ApplyPhase { BeforeFrame, AfterSolve };
     enum class CommandTag { SetParam, EnableOperator, DisableOperator, AddNodes, RemoveNodes, AddRelations, RemoveRelations, SetFieldRegion, Custom };
     struct Command { CommandTag tag; const void* data; size_t bytes; };
 
-    // Backend choice exposed to engine
     struct Chosen { DataLayout layout; Backend backend; int threads; };
 
-    // Solve overrides used at runtime
     struct SolveOverrides { int substeps_override{0}; int iterations_override{0}; };
 }}
 
-#endif // HINACLOTH_ENGINE_TYPES_H
-
+#endif

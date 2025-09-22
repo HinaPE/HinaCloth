@@ -12,7 +12,8 @@ namespace sim {
                                  const float* alpha_edge,
                                  int iterations,
                                  float alpha,
-                                 float /*dt*/) {
+                                 float dt) {
+        (void)dt;
         std::span<const float> R{rest, m};
         std::span<const float> W{}; if (inv_mass) W = std::span<const float>(inv_mass, pos.n);
         std::span<float> L{}; if (lambda_edge) L = std::span<float>(lambda_edge, m);
@@ -35,7 +36,6 @@ namespace sim {
                 float dlambda = -(C + a_e * lambda_prev) / denom;
                 float s = dlambda / len;
                 float cx = s * dx, cy = s * dy, cz = s * dz;
-                // Apply weighted corrections with correct gradient signs: g_a=-n, g_b=+n
                 if (wi > 0.0f) {
                     pos.x[a] -= wi * cx;
                     pos.y[a] -= wi * cy;

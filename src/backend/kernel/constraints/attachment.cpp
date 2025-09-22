@@ -13,7 +13,7 @@ namespace sim {
         for (std::size_t i = 0; i < n; ++i) {
             float wi = w[i];
             if (wi <= 0.0f) continue;
-            if (inv_mass && inv_mass[i] == 0.0f) continue; // pinned
+            if (inv_mass && inv_mass[i] == 0.0f) continue;
             wi = std::clamp(wi, 0.0f, 1.0f);
             float ax = tx[i] - pos.x[i];
             float ay = ty[i] - pos.y[i];
@@ -24,4 +24,3 @@ namespace sim {
         }
     }
 }
-

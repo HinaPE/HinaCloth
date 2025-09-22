@@ -1,3 +1,7 @@
+/*
+ * File: data.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_DATA_H
 #define HINACLOTH_DATA_H
 #include <vector>
@@ -17,35 +21,26 @@ namespace sim {
         std::vector<float> px;
         std::vector<float> py;
         std::vector<float> pz;
-        // XPBD node properties
-        std::vector<float> inv_mass;   // per node inverse mass (0 -> pinned)
-        // XPBD constraint state
-        std::vector<float> lambda_edge; // per-edge lambda accumulator
-        // Global parameters
+        std::vector<float> inv_mass;
+        std::vector<float> lambda_edge;
         float gx;
         float gy;
         float gz;
-        // Distance compliance: global and optional per-edge (compliance, not alpha). Alpha is computed per substep.
-        float distance_compliance; // compliance for distance constraints (0 => PBD)
-        std::vector<float> distance_compliance_edge; // optional per-edge compliance
-        std::vector<float> distance_alpha_edge;      // per-edge alpha computed for current substep (size = edge_count)
-        // Solve parameters (policy defaults, overridable at runtime)
+        float distance_compliance;
+        std::vector<float> distance_compliance_edge;
+        std::vector<float> distance_alpha_edge;
         int   solve_substeps;
         int   solve_iterations;
         float solve_damping;
-        // Exec parameters (from Policy.exec)
         bool  exec_use_tbb;
-        int   exec_threads; // -1 auto
+        int   exec_threads;
         bool  exec_use_avx2;
-        // Layout selection (Stage 3)
-        bool  exec_layout_blocked; // true => use AoSoA blocked layout during solve
-        unsigned int layout_block_size; // AoSoA block size (8/16)
-        std::vector<float> pos_aosoa;   // 3*block*ceil(n/block) packed positions buffer for AoSoA
-        // Stage 4: operator enables
+        bool  exec_layout_blocked;
+        unsigned int layout_block_size;
+        std::vector<float> pos_aosoa;
         bool  op_enable_attachment;
         bool  op_enable_bending;
-        // Stage 4: attachment operator data (per node)
-        std::vector<float> attach_w;   // [0,1], 0=off, 1=hard target
+        std::vector<float> attach_w;
         std::vector<float> attach_tx;
         std::vector<float> attach_ty;
         std::vector<float> attach_tz;
@@ -57,4 +52,4 @@ namespace sim {
     void core_data_destroy(Data* d);
 }
 
-#endif //HINACLOTH_DATA_H
+#endif

@@ -1,3 +1,7 @@
+/*
+ * File: space_in.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_SPACE_IN_H
 #define HINACLOTH_SPACE_IN_H
 
@@ -13,4 +17,4 @@ namespace sim
     };
 }
 
-#endif //HINACLOTH_SPACE_IN_H
+#endif

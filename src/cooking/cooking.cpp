@@ -42,7 +42,6 @@ namespace sim {
     static void compute_islands_and_reorder(Model& m) {
         const uint32_t n = m.node_count;
         const std::size_t mcnt = m.edges.size() / 2;
-        // Build adjacency
         std::vector<std::vector<uint32_t>> adj(n);
         adj.reserve(n);
         for (std::size_t e = 0; e < mcnt; ++e) {
@@ -50,7 +49,6 @@ namespace sim {
             uint32_t b = m.edges[2*e+1];
             if (a < n && b < n) { adj[a].push_back(b); adj[b].push_back(a); }
         }
-        // BFS to find comps
         std::vector<int> comp(n, -1);
         int cc = 0;
         std::queue<uint32_t> q;
@@ -66,8 +64,7 @@ namespace sim {
             }
             cc++;
         }
-        // Bucket edges by component
-        std::vector<std::vector<uint32_t>> edge_pairs(cc); // store pairs flatten later
+        std::vector<std::vector<uint32_t>> edge_pairs(cc);
         std::vector<std::vector<float>>    edge_rest(cc);
         for (std::size_t e = 0; e < mcnt; ++e) {
             uint32_t a = m.edges[2*e+0];
@@ -75,13 +72,12 @@ namespace sim {
             int cida = (a < n) ? comp[a] : -1;
             int cidb = (b < n) ? comp[b] : -1;
             int cid  = (cida == cidb && cida >= 0) ? cida : -1;
-            if (cid < 0) cid = 0; // fallback bucket
+            if (cid < 0) cid = 0;
             edge_pairs[cid].push_back(a);
             edge_pairs[cid].push_back(b);
             if (e < m.rest.size()) edge_rest[cid].push_back(m.rest[e]);
             else edge_rest[cid].push_back(0.0f);
         }
-        // Reorder edges/rest and fill offsets
         m.island_count = (uint32_t) cc;
         m.island_offsets.assign(cc + 1, 0);
         std::vector<uint32_t> new_edges; new_edges.reserve(m.edges.size());
@@ -137,7 +133,6 @@ namespace sim {
             float dz   = z[b] - z[a];
             m->rest[e] = std::sqrt(dx * dx + dy * dy + dz * dz);
         }
-        // Optional: parse bend_pairs if present (arity 4)
         for (size_t r = 0; r < in.topo.relation_count; ++r) {
             auto& rv = in.topo.relations[r];
             if (!rv.tag || std::strcmp(rv.tag, "bend_pairs") != 0) continue;

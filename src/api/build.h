@@ -1,3 +1,7 @@
+/*
+ * File: build.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_BUILD_H
 #define HINACLOTH_BUILD_H
 #include "state_in.h"
@@ -28,4 +32,4 @@ namespace sim {
         PackOptions pack;
     };
 }
-#endif //HINACLOTH_BUILD_H
+#endif

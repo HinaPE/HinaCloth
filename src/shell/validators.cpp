@@ -22,7 +22,7 @@ namespace sim {
         const char* p = (const char*) f->data;
         for (size_t i = 0; i < f->count; ++i) {
             const float* v = (const float*) p;
-            if (!(v[0] == v[0]) || !(v[1] == v[1]) || !(v[2] == v[2])) return true; // NaN check
+            if (!(v[0] == v[0]) || !(v[1] == v[1]) || !(v[2] == v[2])) return true;
             p += f->stride_bytes;
         }
         return false;
@@ -39,14 +39,12 @@ namespace sim {
                 if (lvl == ValidateLevel::Strict) return false;
             }
         }
-        // position required (accept aliases)
         const char* pos_aliases[] = {"position", "pos", "positions"};
         auto pos = find_field_any(s, pos_aliases, 3);
         if (!pos) return false;
         if (pos->components != 3) return false;
         if (pos->count != topo.node_count) return false;
         if (any_nan_vec3(pos)) return false;
-        // velocity optional; if present must match (accept aliases)
         const char* vel_aliases[] = {"velocity", "vel", "velocities"};
         auto vel = find_field_any(s, vel_aliases, 3);
         if (vel) {
@@ -64,14 +62,12 @@ namespace sim {
             auto& r = t.relations[i];
             if (r.tag && std::strcmp(r.tag, "edges") == 0) {
                 if (r.arity != 2) return false;
-                // out-of-range check
                 bool bad = false;
                 for (size_t k = 0; k < r.count; ++k) {
                     uint32_t a = r.indices[2*k+0], b = r.indices[2*k+1];
                     if (a >= t.node_count || b >= t.node_count) { bad = true; break; }
                 }
                 if (bad && lvl == ValidateLevel::Strict) return false;
-                // duplicate detection (unordered_set of 64-bit key)
                 std::unordered_set<uint64_t> seen;
                 seen.reserve(r.count * 2 + 1);
                 for (size_t k = 0; k < r.count; ++k) {
@@ -84,9 +80,7 @@ namespace sim {
                 }
             } else if (r.tag && std::strcmp(r.tag, "bend_pairs") == 0) {
                 if (r.arity != 4) return false;
-                // optional: skip deep validation for now
             } else {
-                // unknown relation tag: strict fails, tolerant ignores
                 if (lvl == ValidateLevel::Strict) return false;
             }
         }

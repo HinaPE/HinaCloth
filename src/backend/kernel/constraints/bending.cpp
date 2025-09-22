@@ -19,9 +19,10 @@ namespace sim {
         return std::acos(c);
     }
 
-    void kernel_bending_project(const unsigned int* quads, size_t m, SoAView3& pos, const float* target, const float* inv_mass, int iterations, float /*alpha*/, float /*dt*/) {
+    void kernel_bending_project(const unsigned int* quads, size_t m, SoAView3& pos, const float* target, const float* inv_mass, int iterations, float alpha, float dt) {
+        (void)alpha; (void)dt;
         if (!quads || !target || m == 0) return;
-        const float k = 0.1f; // simple stiffness per iteration
+        const float k = 0.1f;
         for (int it = 0; it < iterations; ++it) {
             for (size_t qi = 0; qi < m; ++qi) {
                 unsigned int i0 = quads[4*qi+0];

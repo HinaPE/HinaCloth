@@ -1,3 +1,7 @@
+/*
+ * File: distance_aosoa.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_DISTANCE_AOSOA_H
 #define HINACLOTH_DISTANCE_AOSOA_H
 #include <cstddef>
@@ -16,4 +20,4 @@ namespace sim {
                                        float dt);
 }
 
-#endif //HINACLOTH_DISTANCE_AOSOA_H
+#endif

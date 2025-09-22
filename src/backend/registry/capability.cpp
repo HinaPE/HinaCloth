@@ -5,9 +5,7 @@ namespace sim { namespace eng {
     size_t enumerate_capabilities(eng::Capability* out, size_t cap) {
         eng::Capability list[6];
         size_t n = 0;
-        // Always present: Native + SoA
         list[n++] = eng::Capability{eng::Backend::Native, eng::DataLayout::SoA, "native_soa"};
-        // Native + Blocked (AoSoA)
         list[n++] = eng::Capability{eng::Backend::Native, eng::DataLayout::Blocked, "native_blocked"};
     #if defined(HINACLOTH_HAVE_AVX2)
         list[n++] = eng::Capability{eng::Backend::AVX2, eng::DataLayout::SoA, "avx2_soa"};

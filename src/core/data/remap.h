@@ -1,3 +1,7 @@
+/*
+ * File: remap.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_REMAP_H
 #define HINACLOTH_REMAP_H
 #include <cstdint>
@@ -10,4 +14,4 @@ namespace sim {
 
     void core_remapplan_destroy(RemapPlan* p);
 }
-#endif //HINACLOTH_REMAP_H
+#endif

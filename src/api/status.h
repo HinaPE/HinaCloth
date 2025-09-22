@@ -1,3 +1,7 @@
+/*
+ * File: status.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_STATUS_H
 #define HINACLOTH_STATUS_H
 
@@ -19,4 +23,4 @@ namespace sim {
         T value;
     };
 }
-#endif //HINACLOTH_STATUS_H
+#endif

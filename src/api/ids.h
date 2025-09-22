@@ -1,3 +1,7 @@
+/*
+ * File: ids.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_IDS_H
 #define HINACLOTH_IDS_H
 #include <cstdint>
@@ -11,4 +15,4 @@ namespace sim
     using FieldId = uint32_t;
     using SetId = uint32_t;
 }
-#endif //HINACLOTH_IDS_H
+#endif

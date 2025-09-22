@@ -1,3 +1,7 @@
+/*
+ * File: seq.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_SEQ_H
 #define HINACLOTH_SEQ_H
 #include <cstdint>
@@ -13,4 +17,4 @@ namespace sim {
                                 float alpha,
                                 float dt);
 }
-#endif //HINACLOTH_SEQ_H
+#endif

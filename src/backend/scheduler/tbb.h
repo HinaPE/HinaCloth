@@ -1,3 +1,7 @@
+/*
+ * File: tbb.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_TBB_H
 #define HINACLOTH_TBB_H
 #include <cstdint>
@@ -14,4 +18,4 @@ namespace sim {
                                 float alpha,
                                 float dt);
 }
-#endif //HINACLOTH_TBB_H
+#endif

@@ -1,3 +1,7 @@
+/*
+ * File: commands.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_COMMANDS_H
 #define HINACLOTH_COMMANDS_H
 #include <cstddef>
@@ -27,4 +31,4 @@ namespace sim
     };
 }
 
-#endif //HINACLOTH_COMMANDS_H
+#endif

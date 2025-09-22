@@ -8,9 +8,7 @@
 namespace sim {
 #if defined(HINACLOTH_HAVE_AVX2)
     static inline __m256 safe_rsqrt(__m256 x) {
-        // Avoid div-by-zero: rsqrt approximation refined by one Newton-Raphson step
         __m256 rs = _mm256_rsqrt_ps(x);
-        // refine: rs = rs * (1.5 - 0.5*x*rs*rs)
         const __m256 three_halfs = _mm256_set1_ps(1.5f);
         const __m256 half        = _mm256_set1_ps(0.5f);
         __m256 t = _mm256_mul_ps(half, _mm256_mul_ps(x, _mm256_mul_ps(rs, rs)));
@@ -28,7 +26,7 @@ namespace sim {
                                       float alpha,
                                       float dt) {
         (void) dt;
-        const int W = 8; // AVX2 width
+        const int W = 8;
         for (int it = 0; it < iterations; ++it) {
             std::size_t e = 0;
             for (; e + W <= m; e += W) {
@@ -39,7 +37,6 @@ namespace sim {
                 }
                 __m256i ia = _mm256_load_si256((const __m256i*) a_idx);
                 __m256i ib = _mm256_load_si256((const __m256i*) b_idx);
-                // gather positions
                 __m256 ax = _mm256_i32gather_ps(pos.x, ia, 4);
                 __m256 ay = _mm256_i32gather_ps(pos.y, ia, 4);
                 __m256 az = _mm256_i32gather_ps(pos.z, ia, 4);
@@ -51,7 +48,7 @@ namespace sim {
                 __m256 dz = _mm256_sub_ps(bz, az);
                 __m256 len2 = _mm256_fmadd_ps(dz, dz, _mm256_fmadd_ps(dy, dy, _mm256_mul_ps(dx, dx)));
                 __m256 inv_len = safe_rsqrt(_mm256_max_ps(len2, _mm256_set1_ps(1e-16f)));
-                __m256 len     = _mm256_mul_ps(len2, inv_len); // len = len2 * rsqrt(len2)
+                __m256 len     = _mm256_mul_ps(len2, inv_len);
                 __m256 C       = _mm256_sub_ps(len, _mm256_loadu_ps(rest + e));
                 __m256 wi = inv_mass ? _mm256_i32gather_ps(inv_mass, ia, 4) : _mm256_set1_ps(1.0f);
                 __m256 wj = inv_mass ? _mm256_i32gather_ps(inv_mass, ib, 4) : _mm256_set1_ps(1.0f);
@@ -63,7 +60,6 @@ namespace sim {
                 __m256 cx = _mm256_mul_ps(s, dx);
                 __m256 cy = _mm256_mul_ps(s, dy);
                 __m256 cz = _mm256_mul_ps(s, dz);
-                // write-back per-lane (no scatter in AVX2)
                 alignas(32) float cx_s[W], cy_s[W], cz_s[W], wi_s[W], wj_s[W], lnew[W], lprev[W];
                 _mm256_store_ps(cx_s, cx); _mm256_store_ps(cy_s, cy); _mm256_store_ps(cz_s, cz);
                 _mm256_store_ps(wi_s, wi); _mm256_store_ps(wj_s, wj);
@@ -77,7 +73,6 @@ namespace sim {
                     if (lambda_edge) lambda_edge[e + k] = lnew[k];
                 }
             }
-            // tail
             if (e < m) {
                 SoAView3 v = pos;
                 kernel_distance_project(edges + 2*e, m - e, v, rest + e, inv_mass, lambda_edge ? (lambda_edge + e) : nullptr, alpha_edge ? (alpha_edge + e) : nullptr, 1, alpha, dt);
@@ -94,7 +89,6 @@ namespace sim {
                                       int iterations,
                                       float alpha,
                                       float dt) {
-        // Fallback to scalar when AVX2 not available at compile-time
         kernel_distance_project(edges, m, pos, rest, inv_mass, lambda_edge, alpha_edge, iterations, alpha, dt);
     }
 #endif

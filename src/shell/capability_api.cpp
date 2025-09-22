@@ -5,10 +5,8 @@
 
 namespace sim {
     size_t enumerate_capabilities(Capability* out, size_t cap) {
-        // First, query engine-internal capabilities count
         size_t n = eng::enumerate_capabilities(nullptr, 0);
         if (!out || cap == 0) return n;
-        // Fetch into a temporary buffer and map
         std::vector<eng::Capability> tmp(n);
         n = eng::enumerate_capabilities(tmp.data(), tmp.size());
         size_t k = n < cap ? n : cap;

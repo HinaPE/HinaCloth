@@ -1,3 +1,7 @@
+/*
+ * File: soa.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_SOA_H
 #define HINACLOTH_SOA_H
 #include <cstddef>
@@ -18,4 +22,4 @@ namespace sim {
     }
 }
 
-#endif //HINACLOTH_SOA_H
+#endif

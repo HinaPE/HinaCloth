@@ -1,3 +1,7 @@
+/*
+ * File: state_in.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_STATE_IN_H
 #define HINACLOTH_STATE_IN_H
 #include <cstddef>
@@ -28,4 +32,4 @@ namespace sim
     };
 }
 
-#endif //HINACLOTH_STATE_IN_H
+#endif

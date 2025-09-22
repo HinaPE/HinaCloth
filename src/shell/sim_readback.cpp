@@ -7,4 +7,3 @@ namespace sim {
         return engine_copy_positions(s->e, dst, maxCount, outCount);
     }
 }
-

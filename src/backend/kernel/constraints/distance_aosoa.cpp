@@ -40,7 +40,8 @@ namespace sim {
                                        const float* alpha_edge,
                                        int iterations,
                                        float alpha,
-                                       float /*dt*/) {
+                                       float dt) {
+        (void)dt;
         for (int it = 0; it < iterations; ++it) {
         #if defined(HINACLOTH_HAVE_AVX2)
             const int W = 8;
@@ -48,7 +49,6 @@ namespace sim {
             for (; e + W <= m; e += W) {
                 alignas(32) uint32_t a_idx[W], b_idx[W];
                 for (int k = 0; k < W; ++k) { a_idx[k] = edges[2*(e+k) + 0]; b_idx[k] = edges[2*(e+k) + 1]; }
-                // Compute AoSoA offsets per-lane for x/y/z
                 alignas(32) int ax_off[W], ay_off[W], az_off[W];
                 alignas(32) int bx_off[W], by_off[W], bz_off[W];
                 for (int k = 0; k < W; ++k) {
@@ -73,9 +73,7 @@ namespace sim {
                 __m256 dy = _mm256_sub_ps(by, ay);
                 __m256 dz = _mm256_sub_ps(bz, az);
                 __m256 len2 = _mm256_fmadd_ps(dz, dz, _mm256_fmadd_ps(dy, dy, _mm256_mul_ps(dx, dx)));
-                // Avoid div by zero
                 __m256 inv_len = _mm256_rsqrt_ps(_mm256_max_ps(len2, _mm256_set1_ps(1e-16f)));
-                // refine once
                 const __m256 three_halfs = _mm256_set1_ps(1.5f);
                 const __m256 half        = _mm256_set1_ps(0.5f);
                 __m256 t = _mm256_mul_ps(half, _mm256_mul_ps(len2, _mm256_mul_ps(inv_len, inv_len)));
@@ -92,7 +90,6 @@ namespace sim {
                 __m256 cx = _mm256_mul_ps(s, dx);
                 __m256 cy = _mm256_mul_ps(s, dy);
                 __m256 cz = _mm256_mul_ps(s, dz);
-                // Scatter by lanes
                 alignas(32) float ax_s[W], ay_s[W], az_s[W], bx_s[W], by_s[W], bz_s[W];
                 alignas(32) float cx_s[W], cy_s[W], cz_s[W], wi_s[W], wj_s[W], lnew[W], lprev[W];
                 _mm256_store_ps(ax_s, ax); _mm256_store_ps(ay_s, ay); _mm256_store_ps(az_s, az);
@@ -109,14 +106,13 @@ namespace sim {
                     if (lambda_edge) lambda_edge[e + k] = lnew[k];
                 }
             }
-            // tail scalar
             for (; e < m; ++e) {
                 uint32_t a = edges[2*e+0], b = edges[2*e+1];
                 float a_e = alpha_edge ? alpha_edge[e] : alpha;
                 project_edge_scalar_aosoa(a, b, pos_blk, rest[e], inv_mass, lambda_edge ? (lambda_edge + e) : nullptr, a_e);
             }
         #else
-            for (int it2 = 0; it2 < 1; ++it2) (void)it2; // keep structure similar
+            for (int it2 = 0; it2 < 1; ++it2) (void)it2;
             for (std::size_t e = 0; e < m; ++e) {
                 uint32_t a = edges[2*e+0], b = edges[2*e+1];
                 float a_e = alpha_edge ? alpha_edge[e] : alpha;

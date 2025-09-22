@@ -1,3 +1,7 @@
+/*
+ * File: distance.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_DISTANCE_H
 #define HINACLOTH_DISTANCE_H
 #include <cstdint>
@@ -10,9 +14,9 @@ namespace sim {
                                  const float* rest,
                                  const float* inv_mass,
                                  float* lambda_edge,
-                                 const float* alpha_edge, // optional per-edge alpha (nullptr => use scalar alpha)
+                                 const float* alpha_edge,
                                  int iterations,
                                  float alpha,
                                  float dt);
 }
-#endif //HINACLOTH_DISTANCE_H
+#endif

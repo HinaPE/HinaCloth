@@ -1,3 +1,7 @@
+/*
+ * File: solver_internal.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_SOLVER_INTERNAL_H
 #define HINACLOTH_SOLVER_INTERNAL_H
 #include "api/sim.h"
@@ -15,4 +19,4 @@ namespace sim {
         unsigned long long rebuilds;
     };
 }
-#endif //HINACLOTH_SOLVER_INTERNAL_H
+#endif

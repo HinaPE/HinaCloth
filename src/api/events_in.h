@@ -1,3 +1,7 @@
+/*
+ * File: events_in.h
+ * Description: HinaCloth header.
+ */
 #ifndef HINACLOTH_EVENTS_IN_H
 #define HINACLOTH_EVENTS_IN_H
 #include <cstddef>
@@ -31,4 +35,4 @@ namespace sim
     };
 }
 
-#endif //HINACLOTH_EVENTS_IN_H
+#endif
