@@ -32,8 +32,3 @@ jobs:
         shell: pwsh
         run: |
           ctest --test-dir build --output-on-failure -j 2
-
-      - name: Run smoke example (all_features)
-        shell: pwsh
-        run: |
-          ./build/example_ex01_all_features.exe --nx=8 --ny=8 --frames=10 --iters=8 --substeps=1

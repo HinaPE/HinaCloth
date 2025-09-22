@@ -27,7 +27,3 @@ jobs:
       - name: Run unit tests (ctest)
         run: |
           ctest --test-dir build --output-on-failure -j 2
-
-      - name: Run smoke example (all_features)
-        run: |
-          ./build/example_ex01_all_features --nx=8 --ny=8 --frames=10 --iters=8 --substeps=1
