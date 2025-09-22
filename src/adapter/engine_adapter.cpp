@@ -11,6 +11,7 @@
 #include <new>
 #include <cstdint>
 #include <vector>
+#include <memory>
 
 namespace sim {
     [[nodiscard]] bool shell_cache_query(uint64_t& key_out);
@@ -62,75 +63,76 @@ namespace sim {
     }
 
     struct EngineHandle {
-        Model* model;
-        Data* data;
-        eng::Chosen chosen;
-        int threads;
-        unsigned long long applied;
-        unsigned long long rebuilds;
+        Model* model{};
+        Data* data{};
+        eng::Chosen chosen{};
+        int threads{};
+        unsigned long long applied{};
+        unsigned long long rebuilds{};
     };
 
     EngineHandle* engine_create(const ::sim::BuildDesc& desc) {
-        EngineHandle* e = new(std::nothrow) EngineHandle();
+        std::unique_ptr<EngineHandle> e{new(std::nothrow) EngineHandle()};
         if (!e) return nullptr;
         e->model    = nullptr;
         e->data     = nullptr;
         e->threads  = desc.policy.exec.threads < 0 ? 1 : desc.policy.exec.threads;
         e->applied  = 0;
         e->rebuilds = 0;
-        Model* m    = nullptr;
+
+        Model* m_raw = nullptr;
         uint64_t key = 0;
         bool have_key = shell_cache_query(key);
         if (have_key) {
-            if (!shell_cache_load(key, m)) {
+            if (!shell_cache_load(key, m_raw)) {
                 eng::BuildDesc bd = map_build_desc(desc);
-                if (!cooking_build_model(bd, m)) {
-                    delete e;
+                if (!cooking_build_model(bd, m_raw)) {
                     return nullptr;
                 }
-                shell_cache_store(key, *m);
+                // m_raw is valid; store into cache below
+                shell_cache_store(key, *m_raw);
             }
         } else {
             eng::BuildDesc bd = map_build_desc(desc);
-            if (!cooking_build_model(bd, m)) {
-                delete e;
+            if (!cooking_build_model(bd, m_raw)) {
                 return nullptr;
             }
         }
-        Data* d = nullptr;
+        std::unique_ptr<Model, void(*)(Model*)> m{m_raw, core_model_destroy};
+
+        Data* d_raw = nullptr;
         eng::BuildDesc bd = map_build_desc(desc);
-        if (!core_data_create_from_state(bd, *m, d)) {
-            core_model_destroy(m);
-            delete e;
+        if (!core_data_create_from_state(bd, *m, d_raw)) {
             return nullptr;
         }
-        e->model = m;
-        e->data  = d;
+        std::unique_ptr<Data, void(*)(Data*)> d{d_raw, core_data_destroy};
+
         eng::Chosen ch{};
         if (!eng::backends_choose(*m, bd.policy.exec, ch)) {
-            core_data_destroy(d);
-            core_model_destroy(m);
-            delete e;
             return nullptr;
         }
+
+        e->model = m.release();
+        e->data  = d.release();
         e->chosen = ch;
-        if (d) {
-            d->exec_use_avx2       = (ch.backend == eng::Backend::AVX2);
-            d->exec_use_tbb        = (ch.backend == eng::Backend::TBB);
-            d->exec_threads        = (ch.threads <= 0) ? -1 : ch.threads;
-            d->exec_layout_blocked = (ch.layout == eng::DataLayout::Blocked);
-            if (d->exec_layout_blocked) {
-                unsigned int blk = d->layout_block_size > 0 ? d->layout_block_size : (m->layout_block_size > 0 ? m->layout_block_size : 8u);
-                d->layout_block_size = blk;
-                std::size_t n = d->px.size();
+
+        if (e->data) {
+            e->data->exec_use_avx2       = (ch.backend == eng::Backend::AVX2);
+            e->data->exec_use_tbb        = (ch.backend == eng::Backend::TBB);
+            e->data->exec_threads        = (ch.threads <= 0) ? -1 : ch.threads;
+            e->data->exec_layout_blocked = (ch.layout == eng::DataLayout::Blocked);
+            if (e->data->exec_layout_blocked) {
+                unsigned int blk = e->data->layout_block_size > 0 ? e->data->layout_block_size : (e->model->layout_block_size > 0 ? e->model->layout_block_size : 8u);
+                e->data->layout_block_size = blk;
+                std::size_t n = e->data->px.size();
                 std::size_t nb = (n + (std::size_t)blk - 1) / (std::size_t)blk;
-                d->pos_aosoa.assign(3u * (std::size_t)blk * nb, 0.0f);
+                e->data->pos_aosoa.assign(3u * (std::size_t)blk * nb, 0.0f);
             }
         }
-        return e;
+        return e.release();
     }
 
-    void engine_destroy(EngineHandle* e) {
+    void engine_destroy(EngineHandle* e) noexcept {
         if (!e) return;
         if (e->data) core_data_destroy(e->data);
         if (e->model) core_model_destroy(e->model);
@@ -148,22 +150,27 @@ namespace sim {
 
     ::sim::Status engine_apply_structural_changes(EngineHandle* e, const ::sim::Command* cmds, size_t count) {
         if (!e || !e->data || !e->model) return ::sim::Status::InvalidArgs;
-        Model* nm       = nullptr;
-        RemapPlan* plan = nullptr;
+        Model* nm_raw       = nullptr;
+        RemapPlan* plan_raw = nullptr;
         std::vector<eng::Command> buf; map_commands_to_eng(cmds, count, buf);
-        if (!cooking_rebuild_model_from_commands(*e->model, buf.data(), buf.size(), nm, plan)) return ::sim::Status::ValidationFailed;
-        Data* nd = nullptr;
-        bool ok  = core_data_apply_remap(*e->data, *plan, nd);
+        if (!cooking_rebuild_model_from_commands(*e->model, buf.data(), buf.size(), nm_raw, plan_raw)) return ::sim::Status::ValidationFailed;
+        std::unique_ptr<Model, void(*)(Model*)> nm{nm_raw, core_model_destroy};
+        std::unique_ptr<RemapPlan, void(*)(RemapPlan*)> plan{plan_raw, core_remapplan_destroy};
+
+        Data* nd_raw = nullptr;
+        bool ok  = core_data_apply_remap(*e->data, *plan, nd_raw);
         if (!ok) {
-            core_model_destroy(nm);
-            core_remapplan_destroy(plan);
             return ::sim::Status::ValidationFailed;
         }
-        core_data_destroy(e->data);
-        core_model_destroy(e->model);
-        core_remapplan_destroy(plan);
-        e->model = nm;
-        e->data  = nd;
+        std::unique_ptr<Data, void(*)(Data*)> nd{nd_raw, core_data_destroy};
+
+        // Replace
+        if (e->data) core_data_destroy(e->data);
+        if (e->model) core_model_destroy(e->model);
+        e->model = nm.release();
+        e->data  = nd.release();
+        // plan is not needed beyond this point
+
         if (e->data) {
             std::size_t ecount = e->model ? (e->model->edges.size() / 2) : 0u;
             e->data->lambda_edge.assign(ecount, 0.0f);

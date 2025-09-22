@@ -9,6 +9,7 @@
 #include <cmath>
 #include <queue>
 #include <algorithm>
+#include <memory>
 
 namespace sim {
     using namespace eng;
@@ -29,9 +30,9 @@ namespace sim {
         a.resize(count);
         b.resize(count);
         c.resize(count);
-        const char* p = (const char*) src;
+        const char* p = static_cast<const char*>(src);
         for (size_t i = 0; i < count; i++) {
-            const float* v = (const float*) p;
+            const float* v = reinterpret_cast<const float*>(p);
             a[i]           = v[0];
             b[i]           = v[1];
             c[i]           = v[2];
@@ -78,16 +79,16 @@ namespace sim {
             if (e < m.rest.size()) edge_rest[cid].push_back(m.rest[e]);
             else edge_rest[cid].push_back(0.0f);
         }
-        m.island_count = (uint32_t) cc;
+        m.island_count = static_cast<uint32_t>(cc);
         m.island_offsets.assign(cc + 1, 0);
         std::vector<uint32_t> new_edges; new_edges.reserve(m.edges.size());
         std::vector<float> new_rest; new_rest.reserve(m.rest.size());
         for (int cidx = 0; cidx < cc; ++cidx) {
-            m.island_offsets[cidx] = (uint32_t) (new_rest.size());
+            m.island_offsets[cidx] = static_cast<uint32_t>(new_rest.size());
             new_edges.insert(new_edges.end(), edge_pairs[cidx].begin(), edge_pairs[cidx].end());
             new_rest.insert(new_rest.end(), edge_rest[cidx].begin(), edge_rest[cidx].end());
         }
-        m.island_offsets[cc] = (uint32_t) (new_rest.size());
+        m.island_offsets[cc] = static_cast<uint32_t>(new_rest.size());
         m.edges.swap(new_edges);
         m.rest.swap(new_rest);
     }
@@ -110,17 +111,17 @@ namespace sim {
 
     bool cooking_build_model(const BuildDesc& in, Model*& out) {
         if (in.topo.node_count == 0) return false;
-        Model* m = new(std::nothrow) Model();
+        std::unique_ptr<Model> m{new(std::nothrow) Model()};
         if (!m) return false;
         m->node_count = in.topo.node_count;
         if (in.topo.relations && in.topo.relation_count > 0) {
             auto& rv = in.topo.relations[0];
-            if (rv.arity != 2) { delete m; return false; }
+            if (rv.arity != 2) { return false; }
             m->edges.assign(rv.indices, rv.indices + rv.count * 2);
         }
         size_t npos = 0, spos = 0;
         const void* ppos = find_field(in.state, "position", 3, npos, spos);
-        if (!ppos || npos != m->node_count) { delete m; return false; }
+        if (!ppos || npos != m->node_count) { return false; }
         std::vector<float> x, y, z;
         load_vec3_aos(ppos, npos, spos, x, y, z);
         size_t ecount = m->edges.size() / 2;
@@ -151,14 +152,14 @@ namespace sim {
         compute_islands_and_reorder(*m);
         m->node_remap.resize(m->node_count);
         for (uint32_t i = 0; i < m->node_count; ++i) m->node_remap[i] = i;
-        if (in.pack.block_size > 0) m->layout_block_size = (uint32_t) in.pack.block_size;
-        out = m;
+        if (in.pack.block_size > 0) m->layout_block_size = static_cast<uint32_t>(in.pack.block_size);
+        out = m.release();
         return true;
     }
 
     bool cooking_rebuild_model_from_commands(const Model& cur, const Command* cmds, size_t count, Model*& out, RemapPlan*& plan) {
         (void)cmds; (void)count;
-        Model* m = new(std::nothrow) Model();
+        std::unique_ptr<Model> m{new(std::nothrow) Model()};
         if (!m) return false;
         m->node_count = cur.node_count;
         m->edges      = cur.edges;
@@ -169,12 +170,12 @@ namespace sim {
         m->layout_block_size = cur.layout_block_size;
         m->bend_pairs = cur.bend_pairs;
         m->bend_rest_angle = cur.bend_rest_angle;
-        RemapPlan* rp = new(std::nothrow) RemapPlan();
-        if (!rp) { delete m; return false; }
+        std::unique_ptr<RemapPlan> rp{new(std::nothrow) RemapPlan()};
+        if (!rp) { return false; }
         rp->old_to_new.resize(m->node_count);
         for (uint32_t i = 0; i < m->node_count; i++) rp->old_to_new[i] = i;
-        out  = m;
-        plan = rp;
+        out  = m.release();
+        plan = rp.release();
         return true;
     }
 }

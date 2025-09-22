@@ -6,6 +6,7 @@
 #include <cstring>
 #include <new>
 #include <cstdint>
+#include <memory>
 
 namespace sim {
     using namespace eng;
@@ -26,9 +27,9 @@ namespace sim {
         a.resize(count);
         b.resize(count);
         c.resize(count);
-        const char* p = (const char*) src;
+        const char* p = static_cast<const char*>(src);
         for (size_t i = 0; i < count; i++) {
-            const float* v = (const float*) p;
+            const float* v = reinterpret_cast<const float*>(p);
             a[i]           = v[0];
             b[i]           = v[1];
             c[i]           = v[2];
@@ -37,7 +38,7 @@ namespace sim {
     }
 
     bool core_data_create_from_state(const BuildDesc& in, const Model& m, Data*& out) {
-        Data* d = new(std::nothrow) Data();
+        std::unique_ptr<Data> d{new(std::nothrow) Data()};
         if (!d) return false;
         d->gx = 0.0f; d->gy = -9.8f; d->gz = 0.0f;
         d->distance_compliance = 0.0f;
@@ -45,7 +46,7 @@ namespace sim {
         d->exec_threads  = in.policy.exec.threads == 0 ? -1 : in.policy.exec.threads;
         d->exec_use_avx2 = (in.policy.exec.backend == Backend::AVX2);
         d->exec_layout_blocked = (in.policy.exec.layout == DataLayout::Blocked);
-        unsigned int blk = in.pack.block_size > 0 ? (unsigned int) in.pack.block_size : (m.layout_block_size > 0 ? m.layout_block_size : 8u);
+        unsigned int blk = in.pack.block_size > 0 ? static_cast<unsigned int>(in.pack.block_size) : (m.layout_block_size > 0 ? m.layout_block_size : 8u);
         d->layout_block_size = blk;
         d->solve_substeps   = in.policy.solve.substeps > 0 ? in.policy.solve.substeps : 1;
         d->solve_iterations = in.policy.solve.iterations > 0 ? in.policy.solve.iterations : 8;
@@ -57,19 +58,19 @@ namespace sim {
                 else if (std::strcmp(p.name, "gravity_y") == 0) d->gy = p.value.f32;
                 else if (std::strcmp(p.name, "gravity_z") == 0) d->gz = p.value.f32;
                 else if (std::strcmp(p.name, "distance_compliance") == 0) d->distance_compliance = p.value.f32;
-                else if (std::strcmp(p.name, "iterations") == 0) d->solve_iterations = (int) p.value.f32;
-                else if (std::strcmp(p.name, "substeps") == 0) d->solve_substeps = (int) p.value.f32;
+                else if (std::strcmp(p.name, "iterations") == 0) d->solve_iterations = static_cast<int>(p.value.f32);
+                else if (std::strcmp(p.name, "substeps") == 0) d->solve_substeps = static_cast<int>(p.value.f32);
                 else if (std::strcmp(p.name, "damping") == 0) d->solve_damping = p.value.f32;
             }
         }
         size_t npos = 0, nvel = 0; size_t spos = 0, svel = 0;
         const void* ppos = find_field(in.state, "position", 3, npos, spos);
         const void* pvel = find_field(in.state, "velocity", 3, nvel, svel);
-        if (!ppos || npos != m.node_count) { delete d; return false; }
+        if (!ppos || npos != m.node_count) { return false; }
         load_vec3_aos(ppos, npos, spos, d->x, d->y, d->z);
         d->vx.assign(npos, 0.0f); d->vy.assign(npos, 0.0f); d->vz.assign(npos, 0.0f);
         if (pvel) {
-            if (nvel != m.node_count) { delete d; return false; }
+            if (nvel != m.node_count) { return false; }
             load_vec3_aos(pvel, nvel, svel, d->vx, d->vy, d->vz);
         }
         d->px = d->x; d->py = d->y; d->pz = d->z;
@@ -79,14 +80,14 @@ namespace sim {
         d->distance_compliance_edge.assign(ecount, 0.0f);
         d->distance_alpha_edge.assign(ecount, 0.0f);
         if (d->exec_layout_blocked) {
-            size_t nb = (npos + (size_t)blk - 1) / (size_t)blk;
-            d->pos_aosoa.assign(3u * (size_t)blk * nb, 0.0f);
+            size_t nb = (npos + static_cast<size_t>(blk) - 1) / static_cast<size_t>(blk);
+            d->pos_aosoa.assign(3u * static_cast<size_t>(blk) * nb, 0.0f);
         }
         d->op_enable_attachment = false;
         d->op_enable_bending    = false;
         d->attach_w.assign(npos, 0.0f);
         d->attach_tx = d->x; d->attach_ty = d->y; d->attach_tz = d->z;
-        out = d;
+        out = d.release();
         return true;
     }
 
@@ -95,14 +96,14 @@ namespace sim {
             auto& c = cmds[i];
             if (c.tag == CommandTag::SetParam && c.data && c.bytes >= sizeof(const char*) + sizeof(float)) {
                 const char* name = *(const char* const*) c.data;
-                const float* v   = (const float*) ((const char*) c.data + sizeof(const char*));
+                const float* v   = reinterpret_cast<const float*>((const char*) c.data + sizeof(const char*));
                 if (name && v) {
                     if (std::strcmp(name, "gravity_x") == 0) d.gx = *v;
                     else if (std::strcmp(name, "gravity_y") == 0) d.gy = *v;
                     else if (std::strcmp(name, "gravity_z") == 0) d.gz = *v;
                     else if (std::strcmp(name, "distance_compliance") == 0) d.distance_compliance = *v;
-                    else if (std::strcmp(name, "iterations") == 0) d.solve_iterations = (int) (*v);
-                    else if (std::strcmp(name, "substeps") == 0) d.solve_substeps = (int) (*v);
+                    else if (std::strcmp(name, "iterations") == 0) d.solve_iterations = static_cast<int>(*v);
+                    else if (std::strcmp(name, "substeps") == 0) d.solve_substeps = static_cast<int>(*v);
                     else if (std::strcmp(name, "damping") == 0) d.solve_damping = *v;
                 }
             } else if (c.tag == CommandTag::EnableOperator && c.data && c.bytes == sizeof(const char*)) {
@@ -119,30 +120,30 @@ namespace sim {
                 }
             } else if (c.tag == CommandTag::SetFieldRegion && c.data && c.bytes >= sizeof(const char*) + sizeof(uint32_t) * 2 + sizeof(float) * 3) {
                 const char* field = *(const char* const*) (c.data);
-                const char* p = (const char*) c.data + sizeof(const char*);
+                const char* p = reinterpret_cast<const char*>(c.data) + sizeof(const char*);
                 uint32_t start = *(const uint32_t*) p; p += sizeof(uint32_t);
                 uint32_t cnt   = *(const uint32_t*) p; p += sizeof(uint32_t);
-                const float* v3 = (const float*) p;
+                const float* v3 = reinterpret_cast<const float*>(p);
                 if (field && std::strcmp(field, "inv_mass") == 0) {
                     if (start < d.inv_mass.size()) {
-                        uint32_t end = (uint32_t) std::min<size_t>(d.inv_mass.size(), (size_t) start + (size_t) cnt);
+                        uint32_t end = static_cast<uint32_t>(std::min<size_t>(d.inv_mass.size(), static_cast<size_t>(start) + static_cast<size_t>(cnt)));
                         for (uint32_t j = start; j < end; ++j) d.inv_mass[j] = v3[0];
                     }
                 } else if (field && std::strcmp(field, "attach_w") == 0) {
                     if (start < d.attach_w.size()) {
-                        uint32_t end = (uint32_t) std::min<size_t>(d.attach_w.size(), (size_t) start + (size_t) cnt);
+                        uint32_t end = static_cast<uint32_t>(std::min<size_t>(d.attach_w.size(), static_cast<size_t>(start) + static_cast<size_t>(cnt)));
                         for (uint32_t j = start; j < end; ++j) d.attach_w[j] = v3[0];
                     }
                 } else if (field && std::strcmp(field, "attach_target") == 0) {
                     if (start < d.attach_tx.size()) {
-                        uint32_t end = (uint32_t) std::min<size_t>(d.attach_tx.size(), (size_t) start + (size_t) cnt);
+                        uint32_t end = static_cast<uint32_t>(std::min<size_t>(d.attach_tx.size(), static_cast<size_t>(start) + static_cast<size_t>(cnt)));
                         for (uint32_t j = start; j < end; ++j) {
                             d.attach_tx[j] = v3[0]; d.attach_ty[j] = v3[1]; d.attach_tz[j] = v3[2];
                         }
                     }
                 } else if (field && std::strcmp(field, "distance_compliance_edge") == 0) {
                     if (start < d.distance_compliance_edge.size()) {
-                        uint32_t end = (uint32_t) std::min<size_t>(d.distance_compliance_edge.size(), (size_t) start + (size_t) cnt);
+                        uint32_t end = static_cast<uint32_t>(std::min<size_t>(d.distance_compliance_edge.size(), static_cast<size_t>(start) + static_cast<size_t>(cnt)));
                         for (uint32_t j = start; j < end; ++j) d.distance_compliance_edge[j] = v3[0];
                     }
                 }
@@ -152,7 +153,7 @@ namespace sim {
     }
 
     bool core_data_apply_remap(const Data& oldd, const RemapPlan& plan, Data*& newd) {
-        Data* d = new(std::nothrow) Data();
+        std::unique_ptr<Data> d{new(std::nothrow) Data()};
         if (!d) return false;
         size_t n = oldd.x.size();
         if (plan.old_to_new.size() == n) {
@@ -195,14 +196,14 @@ namespace sim {
         d->exec_layout_blocked = oldd.exec_layout_blocked;
         d->layout_block_size   = oldd.layout_block_size;
         if (d->exec_layout_blocked) {
-            size_t nb = (n + (size_t)d->layout_block_size - 1) / (size_t)d->layout_block_size;
-            d->pos_aosoa.assign(3u * (size_t)d->layout_block_size * nb, 0.0f);
+            size_t nb = (n + static_cast<size_t>(d->layout_block_size) - 1) / static_cast<size_t>(d->layout_block_size);
+            d->pos_aosoa.assign(3u * static_cast<size_t>(d->layout_block_size) * nb, 0.0f);
         }
         d->op_enable_attachment = oldd.op_enable_attachment;
         d->op_enable_bending    = oldd.op_enable_bending;
-        newd  = d;
+        newd  = d.release();
         return true;
     }
 
-    void core_data_destroy(Data* d) { delete d; }
+    void core_data_destroy(Data* d) noexcept { delete d; }
 }

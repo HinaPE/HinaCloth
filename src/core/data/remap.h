@@ -12,6 +12,6 @@ namespace sim {
         std::vector<uint32_t> old_to_new;
     };
 
-    void core_remapplan_destroy(RemapPlan* p);
+    void core_remapplan_destroy(RemapPlan* p) noexcept;
 }
 #endif

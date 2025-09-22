@@ -9,7 +9,7 @@
 
 namespace sim {
     struct Model {
-        uint32_t node_count;
+        uint32_t node_count{0};
         std::vector<uint32_t> edges;
         std::vector<float> rest;
         uint32_t island_count{1};
@@ -20,6 +20,6 @@ namespace sim {
         std::vector<float>    bend_rest_angle;
     };
 
-    void core_model_destroy(Model* m);
+    void core_model_destroy(Model* m) noexcept;
 }
 #endif

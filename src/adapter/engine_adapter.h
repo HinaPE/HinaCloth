@@ -14,12 +14,12 @@ namespace sim {
     struct EngineHandle;
 
     struct SolveOverrides {
-        int substeps_override;
-        int iterations_override;
+        int substeps_override{0};
+        int iterations_override{0};
     };
 
     [[nodiscard]] EngineHandle* engine_create(const BuildDesc& desc);
-    void engine_destroy(EngineHandle* e);
+    void engine_destroy(EngineHandle* e) noexcept;
     Status engine_apply_small_params(EngineHandle* e, const Command* cmds, size_t count);
     Status engine_apply_structural_changes(EngineHandle* e, const Command* cmds, size_t count);
     Status engine_step(EngineHandle* e, float dt, const SolveOverrides* ovr, TelemetryFrame* out);

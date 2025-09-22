@@ -1,4 +1,5 @@
 #include "solver_internal.h"
+#include <memory>
 
 namespace sim {
     bool shell_validate(const BuildDesc& d);
@@ -26,7 +27,7 @@ namespace sim {
         shell_cache_track_begin(cfg);
         shell_translate(cfg);
         shell_pack(cfg);
-        Solver* s = new(std::nothrow) Solver();
+        std::unique_ptr<Solver> s{new(std::nothrow) Solver()};
         if (!s) {
             shell_cache_track_end();
             Result<Solver*> r;
@@ -37,7 +38,6 @@ namespace sim {
         s->e = engine_create(cfg);
         shell_cache_track_end();
         if (!s->e) {
-            delete s;
             Result<Solver*> r;
             r.status = Status::NoBackend;
             r.value  = nullptr;
@@ -58,7 +58,7 @@ namespace sim {
         s->rebuilds               = 0;
         Result<Solver*> r;
         r.status = Status::Ok;
-        r.value  = s;
+        r.value  = s.release();
         return r;
     }
 

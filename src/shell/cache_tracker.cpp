@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <vector>
 #include <cstring>
+#include <memory>
 
 namespace sim {
     static constexpr uint64_t HINACLOTH_CACHE_VERSION = 1ull;
@@ -101,7 +102,7 @@ namespace sim {
         auto it = g_cache.find(key);
         if (it == g_cache.end()) return false;
         const ModelCacheEntry& e = it->second;
-        Model* m = new(std::nothrow) Model();
+        std::unique_ptr<Model> m{new(std::nothrow) Model()};
         if (!m) return false;
         m->node_count = e.node_count;
         m->edges = e.edges;
@@ -112,7 +113,7 @@ namespace sim {
         m->layout_block_size = e.layout_block_size;
         m->bend_pairs = e.bend_pairs;
         m->bend_rest_angle = e.bend_rest_angle;
-        out = m;
+        out = m.release();
         return true;
     }
 
