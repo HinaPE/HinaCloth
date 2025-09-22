@@ -1,6 +1,6 @@
 #include "engine_adapter.h"
 
-#include "api/sim.h"
+#include "api/chosen.h"
 #include "core/common/types.h"
 #include "core/data/data.h"
 #include "core/model/model.h"
@@ -14,7 +14,7 @@
 
 namespace sim {
     // API-facing forward declarations (implemented in shell)
-    // struct Chosen; // from api/sim.h
+    // struct Chosen; // from api/chosen.h
     // cache tracker (shell)
     [[nodiscard]] bool shell_cache_query(uint64_t& key_out);
     [[nodiscard]] bool shell_cache_load(uint64_t key, Model*& out);

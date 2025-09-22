@@ -1,4 +1,3 @@
-#include "step.h"
 #include "runtime/step_eng.h"
 #include "core/model/model.h"
 #include "core/data/data.h"
@@ -238,26 +237,3 @@ namespace sim { namespace eng {
     }
 }}
 
-namespace sim {
-    static inline ::sim::Status to_api_status(eng::Status s) {
-        using ES = eng::Status; using AS = ::sim::Status;
-        switch (s) {
-            case ES::Ok: return AS::Ok;
-            case ES::InvalidArgs: return AS::InvalidArgs;
-            case ES::ValidationFailed: return AS::ValidationFailed;
-            case ES::NoBackend: return AS::NoBackend;
-            case ES::Unsupported: return AS::Unsupported;
-            case ES::OOM: return AS::OOM;
-            case ES::NotReady: return AS::NotReady;
-            case ES::Busy: return AS::Busy;
-            default: return AS::Unsupported;
-        }
-    }
-
-    Status runtime_step(const Model& m, Data& d, float dt, const SolveOverrides* ovr, TelemetryFrame* out) {
-        auto st = eng::runtime_step(m, d, dt,
-                                    reinterpret_cast<const eng::SolveOverrides*>(ovr),
-                                    reinterpret_cast<eng::TelemetryFrame*>(out));
-        return to_api_status(st);
-    }
-}

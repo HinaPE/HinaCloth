@@ -16,8 +16,8 @@
 
 using sim::Model;
 using sim::Data;
-using sim::Status;
-using sim::TelemetryFrame;
+using sim::eng::Status;
+using sim::eng::TelemetryFrame;
 
 struct TestCase { std::string name; std::function<void(void)> fn; };
 static std::vector<TestCase> g_tests;
@@ -72,7 +72,7 @@ static void test_distance_basic_pbd() {
     d.distance_compliance = 0.0f; // PBD
     d.lambda_edge.assign(1, 0.0f);
     TelemetryFrame t{};
-    REQUIRE(sim::runtime_step(m, d, 0.016f, nullptr, &t) == Status::Ok, "runtime_step failed");
+    REQUIRE(sim::eng::runtime_step(m, d, 0.016f, nullptr, &t) == Status::Ok, "runtime_step failed");
     float dx = d.x[1]-d.x[0], dy = d.y[1]-d.y[0], dz = d.z[1]-d.z[0];
     float L = len3(dx,dy,dz);
     REQUIRE_NEAR(L, 1.0f, 1e-4f, "Distance constraint should converge to rest length (PBD)");
@@ -89,7 +89,7 @@ static void test_distance_basic_xpbd() {
     d.lambda_edge.assign(1, 0.0f);
     const float dt = 0.016f;
     TelemetryFrame t{};
-    REQUIRE(sim::runtime_step(m, d, dt, nullptr, &t) == Status::Ok, "runtime_step failed");
+    REQUIRE(sim::eng::runtime_step(m, d, dt, nullptr, &t) == Status::Ok, "runtime_step failed");
     float L = len3(d.x[1]-d.x[0], d.y[1]-d.y[0], d.z[1]-d.z[0]);
     // XPBD steady-state for two nodes (wi=wj=1): C* = alpha/(wi+wj+alpha)
     float alpha = std::max(0.0f, d.distance_compliance) / (dt*dt);
@@ -105,7 +105,7 @@ static void test_distance_pinned_endpoint() {
     d.inv_mass[0] = 0.0f; // pin first vertex
     d.lambda_edge.assign(1, 0.0f);
     TelemetryFrame t{};
-    REQUIRE(sim::runtime_step(m, d, 0.016f, nullptr, &t) == Status::Ok, "runtime_step failed");
+    REQUIRE(sim::eng::runtime_step(m, d, 0.016f, nullptr, &t) == Status::Ok, "runtime_step failed");
     REQUIRE_NEAR(d.x[0], 0.0f, 1e-6f, "Pinned vertex should not move");
     float L = len3(d.x[1]-d.x[0], d.y[1]-d.y[0], d.z[1]-d.z[0]);
     REQUIRE_NEAR(L, 1.0f, 1e-4f, "Distance constraint with one pinned endpoint should converge");
@@ -124,7 +124,7 @@ static void test_distance_per_edge_compliance() {
     d.lambda_edge.assign(2, 0.0f);
     d.solve_iterations = 25;
     TelemetryFrame t{};
-    REQUIRE(sim::runtime_step(m, d, 0.016f, nullptr, &t) == Status::Ok, "runtime_step failed");
+    REQUIRE(sim::eng::runtime_step(m, d, 0.016f, nullptr, &t) == Status::Ok, "runtime_step failed");
     float L0 = std::fabs((d.x[1]-d.x[0]));
     float L1 = std::fabs((d.x[2]-d.x[1]));
     REQUIRE(L0 <= L1 + 1e-3f, "Stiffer edge should end closer to rest than compliant edge");
@@ -142,7 +142,7 @@ static void test_distance_blocked_layout() {
     d.pos_aosoa.clear();
     d.solve_iterations = 30;
     TelemetryFrame t{};
-    REQUIRE(sim::runtime_step(m, d, 0.016f, nullptr, &t) == Status::Ok, "runtime_step failed (blocked)");
+    REQUIRE(sim::eng::runtime_step(m, d, 0.016f, nullptr, &t) == Status::Ok, "runtime_step failed (blocked)");
     float L = std::fabs(d.x[1]-d.x[0]);
     REQUIRE_NEAR(L, 1.0f, 1e-4f, "Blocked layout solver should converge like SoA");
 }
@@ -157,7 +157,7 @@ static void test_attachment_operator() {
     d.attach_tx[0] = 1.0f; d.attach_ty[0] = 2.0f; d.attach_tz[0] = 3.0f;
     d.op_enable_attachment = true;
     TelemetryFrame t{};
-    REQUIRE(sim::runtime_step(m, d, 0.016f, nullptr, &t) == Status::Ok, "runtime_step failed (attachment)");
+    REQUIRE(sim::eng::runtime_step(m, d, 0.016f, nullptr, &t) == Status::Ok, "runtime_step failed (attachment)");
     REQUIRE_NEAR(d.x[0], 1.0f, 1e-6f, "Attachment x should match target when w=1");
     REQUIRE_NEAR(d.y[0], 2.0f, 1e-6f, "Attachment y should match target when w=1");
     REQUIRE_NEAR(d.z[0], 3.0f, 1e-6f, "Attachment z should match target when w=1");
@@ -196,7 +196,7 @@ static void test_bending_convergence() {
     d.solve_iterations = 40;
     TelemetryFrame t{};
     float before = dihedral_angle_simple(std::array<float,12>{d.x[0],d.y[0],d.z[0], d.x[1],d.y[1],d.z[1], d.x[2],d.y[2],d.z[2], d.x[3],d.y[3],d.z[3]});
-    REQUIRE(sim::runtime_step(m, d, 0.016f, nullptr, &t) == Status::Ok, "runtime_step failed (bending)");
+    REQUIRE(sim::eng::runtime_step(m, d, 0.016f, nullptr, &t) == Status::Ok, "runtime_step failed (bending)");
     float after = dihedral_angle_simple(std::array<float,12>{d.x[0],d.y[0],d.z[0], d.x[1],d.y[1],d.z[1], d.x[2],d.y[2],d.z[2], d.x[3],d.y[3],d.z[3]});
     REQUIRE(after <= before + 1e-4f, "Bending pass should not increase angle away from target");
 }
@@ -219,11 +219,11 @@ static void test_small_grid_stability() {
     d.solve_iterations = 25; d.solve_substeps = 2; d.distance_compliance = 1e-7f;
     d.lambda_edge.assign(rest.size(), 0.0f);
     TelemetryFrame t0{}, t1{}, t2{};
-    REQUIRE(sim::runtime_step(m, d, 0.016f, nullptr, &t0) == Status::Ok, "step0 failed");
+    REQUIRE(sim::eng::runtime_step(m, d, 0.016f, nullptr, &t0) == Status::Ok, "step0 failed");
     double r0 = t0.residual_avg; REQUIRE_FINITE(r0, "r0 finite");
-    REQUIRE(sim::runtime_step(m, d, 0.016f, nullptr, &t1) == Status::Ok, "step1 failed");
+    REQUIRE(sim::eng::runtime_step(m, d, 0.016f, nullptr, &t1) == Status::Ok, "step1 failed");
     double r1 = t1.residual_avg; REQUIRE_FINITE(r1, "r1 finite");
-    REQUIRE(sim::runtime_step(m, d, 0.016f, nullptr, &t2) == Status::Ok, "step2 failed");
+    REQUIRE(sim::eng::runtime_step(m, d, 0.016f, nullptr, &t2) == Status::Ok, "step2 failed");
     double r2 = t2.residual_avg; REQUIRE_FINITE(r2, "r2 finite");
     REQUIRE(r2 <= r0 + 1e-6, "Residual should not explode over a few steps");
 }
