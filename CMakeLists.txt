@@ -49,6 +49,12 @@ file(GLOB_RECURSE HINACLOTH_SRC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h")
 
+# Remove redundant/unused implementation files from build
+list(REMOVE_ITEM HINACLOTH_SRC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/apply_events.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/phases.cpp"
+)
+
 add_library(libhinacloth STATIC ${HINACLOTH_SRC})
 
 # Public include path for consumers

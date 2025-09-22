@@ -10,6 +10,7 @@
 
 #include "core/model/model.h"
 #include "core/data/data.h"
+#include "core/common/types.h"
 #include "runtime/step.h"
 #include "backend/kernel/constraints/distance.h"
 #include "backend/storage/soa.h"
