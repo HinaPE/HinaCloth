@@ -63,36 +63,42 @@ static void push_set_field_region_vec3(TestContext& ctx, sim::Solver* s, const c
 
 static bool nearly_equal(float a, float b, float eps) { return std::fabs(a-b) <= eps; }
 
-static sim::BuildDesc make_build_desc_basic(const std::vector<Vec3>& pos,
-                                            const std::vector<Vec3>* vel,
-                                            const std::vector<uint32_t>& edges,
-                                            const std::vector<uint32_t>* bend_pairs,
-                                            int substeps,
-                                            int iterations,
-                                            float damping,
-                                            bool blocked_layout=false) {
+struct BuildHolder {
+    sim::BuildDesc desc{};
+    std::vector<sim::FieldView> fields;
+    std::vector<sim::RelationView> rels;
+    std::vector<sim::Param> params;
+};
+
+static void setup_build_basic(BuildHolder& h,
+                              const std::vector<Vec3>& pos,
+                              const std::vector<Vec3>* vel,
+                              const std::vector<uint32_t>& edges,
+                              const std::vector<uint32_t>* bend_pairs,
+                              int substeps,
+                              int iterations,
+                              float damping,
+                              bool blocked_layout=false) {
     using namespace sim;
-    // State fields
-    static_assert(sizeof(Vec3) == sizeof(float)*3, "Vec3 must be tightly packed");
-    sim::FieldView fields[2]{};
-    fields[0].name = "position"; fields[0].type = sim::FieldType::F32; fields[0].data = pos.data(); fields[0].count = pos.size(); fields[0].components = 3; fields[0].stride_bytes = sizeof(Vec3);
-    size_t field_count = 1;
+    h = BuildHolder{}; // reset
+    // Fields
+    h.fields.clear();
+    sim::FieldView fpos{}; fpos.name = "position"; fpos.type = sim::FieldType::F32; fpos.data = pos.data(); fpos.count = pos.size(); fpos.components = 3; fpos.stride_bytes = sizeof(Vec3);
+    h.fields.push_back(fpos);
     if (vel) {
-        fields[1].name = "velocity"; fields[1].type = sim::FieldType::F32; fields[1].data = vel->data(); fields[1].count = vel->size(); fields[1].components = 3; fields[1].stride_bytes = sizeof(Vec3);
-        field_count = 2;
+        sim::FieldView fvel{}; fvel.name = "velocity"; fvel.type = sim::FieldType::F32; fvel.data = vel->data(); fvel.count = vel->size(); fvel.components = 3; fvel.stride_bytes = sizeof(Vec3);
+        h.fields.push_back(fvel);
     }
 
-    // Topology
-    sim::RelationView relations[2]{};
-    size_t relation_count = 0;
+    // Relations: edges first, then optional bend_pairs
+    h.rels.clear();
     if (!edges.empty()) {
-        relations[0].indices = edges.data(); relations[0].arity = 2; relations[0].count = edges.size()/2; relations[0].tag = "edges";
-        relation_count = 1;
+        sim::RelationView r{}; r.indices = edges.data(); r.arity = 2; r.count = edges.size()/2; r.tag = "edges";
+        h.rels.push_back(r);
     }
     if (bend_pairs && !bend_pairs->empty()) {
-        // bend_pairs must come after edges because the cooking assumes relation[0] are edges
-        relations[1].indices = bend_pairs->data(); relations[1].arity = 4; relations[1].count = bend_pairs->size()/4; relations[1].tag = "bend_pairs";
-        relation_count = 2;
+        sim::RelationView r{}; r.indices = bend_pairs->data(); r.arity = 4; r.count = bend_pairs->size()/4; r.tag = "bend_pairs";
+        h.rels.push_back(r);
     }
 
     // Policy
@@ -107,25 +113,24 @@ static sim::BuildDesc make_build_desc_basic(const std::vector<Vec3>& pos,
     pol.solve.damping = damping;
     pol.solve.stepper = sim::TimeStepper::Symplectic;
 
-    // Params: set gravity to zero by default for deterministic tests unless explicitly changed via commands
-    static const sim::Param params_arr[] = {
-        { "gravity_x", sim::ParamType::F32, {.f32 = 0.0f} },
-        { "gravity_y", sim::ParamType::F32, {.f32 = 0.0f} },
-        { "gravity_z", sim::ParamType::F32, {.f32 = 0.0f} },
-    };
-    sim::Parameters params{ params_arr, sizeof(params_arr)/sizeof(params_arr[0]) };
+    // Params: zero gravity by default
+    h.params.clear();
+    sim::Param px{ "gravity_x", sim::ParamType::F32, {.f32 = 0.0f} };
+    sim::Param py{ "gravity_y", sim::ParamType::F32, {.f32 = 0.0f} };
+    sim::Param pz{ "gravity_z", sim::ParamType::F32, {.f32 = 0.0f} };
+    h.params.push_back(px); h.params.push_back(py); h.params.push_back(pz);
 
-    sim::BuildDesc bd{};
-    bd.state = sim::StateInit{ fields, field_count };
-    bd.params = params;
-    bd.topo = sim::TopologyIn{ (uint32_t)pos.size(), relations, relation_count };
-    bd.policy = pol;
-    bd.space = sim::SpaceDesc{ sim::SpaceType::Lagrangian, 1, 0 };
-    bd.ops = sim::OperatorsDecl{ nullptr, 0 };
-    bd.events = sim::EventsScript{ nullptr, 0 };
-    bd.validate = sim::ValidateLevel::Strict;
-    bd.pack = sim::PackOptions{ false, 8 };
-    return bd;
+    // BuildDesc wires
+    h.desc = sim::BuildDesc{};
+    h.desc.state = sim::StateInit{ h.fields.data(), h.fields.size() };
+    h.desc.params = sim::Parameters{ h.params.data(), h.params.size() };
+    h.desc.topo = sim::TopologyIn{ (uint32_t)pos.size(), h.rels.data(), h.rels.size() };
+    h.desc.policy = pol;
+    h.desc.space = sim::SpaceDesc{ sim::SpaceType::Lagrangian, 1, 0 };
+    h.desc.ops = sim::OperatorsDecl{ nullptr, 0 };
+    h.desc.events = sim::EventsScript{ nullptr, 0 };
+    h.desc.validate = sim::ValidateLevel::Strict;
+    h.desc.pack = sim::PackOptions{ false, 8 };
 }
 
 static int test_distance_convergence() {
@@ -134,8 +139,8 @@ static int test_distance_convergence() {
     std::vector<Vec3> pos = { {0,0,0}, {1,0,0} };
     std::vector<Vec3> vel = { {0,0,0}, {0.5f,0,0} };
     std::vector<uint32_t> edges = { 0,1 };
-    BuildDesc bd = make_build_desc_basic(pos, &vel, edges, nullptr, /*substeps*/1, /*iterations*/16, /*damping*/0.0f);
-    auto res = sim::create(bd); if (res.status != Status::Ok || !res.value) return 1;
+    BuildHolder bh{}; setup_build_basic(bh, pos, &vel, edges, nullptr, /*substeps*/1, /*iterations*/16, /*damping*/0.0f);
+    auto res = sim::create(bh.desc); if (res.status != Status::Ok || !res.value) return 1;
     Solver* s = res.value;
     // step a few frames
     for (int i=0;i<5;i++) {
@@ -153,8 +158,8 @@ static int test_attachment_operator() {
     std::vector<Vec3> pos = { {0,0,0} };
     std::vector<Vec3> vel = { {0,0,0} };
     std::vector<uint32_t> edges; // none
-    BuildDesc bd = make_build_desc_basic(pos, &vel, edges, nullptr, /*substeps*/1, /*iterations*/8, /*damping*/0.0f);
-    auto res = sim::create(bd); if (res.status != Status::Ok || !res.value) return 1;
+    BuildHolder bh{}; setup_build_basic(bh, pos, &vel, edges, nullptr, /*substeps*/1, /*iterations*/8, /*damping*/0.0f);
+    auto res = sim::create(bh.desc); if (res.status != Status::Ok || !res.value) return 1;
     Solver* s = res.value; TestContext ctx{};
     // Enable attachment and set weight and target
     push_enable_operator(ctx, s, "attachment");
@@ -196,8 +201,8 @@ static int test_bending_convergence() {
     vel[2].z = 1.0f;
     std::vector<uint32_t> edges = { 0,1, 1,2, 2,0, 0,3, 1,3 };
     std::vector<uint32_t> bends = { 0,1,2,3 };
-    BuildDesc bd = make_build_desc_basic(pos, &vel, edges, &bends, /*substeps*/1, /*iterations*/20, /*damping*/0.0f);
-    auto res = sim::create(bd); if (res.status != Status::Ok || !res.value) return 1;
+    BuildHolder bh{}; setup_build_basic(bh, pos, &vel, edges, &bends, /*substeps*/1, /*iterations*/20, /*damping*/0.0f);
+    auto res = sim::create(bh.desc); if (res.status != Status::Ok || !res.value) return 1;
     Solver* s = res.value; TestContext ctx{};
     // Enable bending
     push_enable_operator(ctx, s, "bending");
@@ -220,8 +225,8 @@ static int test_pinned_node() {
     std::vector<Vec3> pos = { {0,0,0}, {1,0,0} };
     std::vector<Vec3> vel = { {0,0,0}, {0,0,0} };
     std::vector<uint32_t> edges = { 0,1 };
-    BuildDesc bd = make_build_desc_basic(pos, &vel, edges, nullptr, /*substeps*/1, /*iterations*/8, /*damping*/0.0f);
-    auto res = sim::create(bd); if (res.status != Status::Ok || !res.value) return 1;
+    BuildHolder bh{}; setup_build_basic(bh, pos, &vel, edges, nullptr, /*substeps*/1, /*iterations*/8, /*damping*/0.0f);
+    auto res = sim::create(bh.desc); if (res.status != Status::Ok || !res.value) return 1;
     Solver* s = res.value; TestContext ctx{};
     // Apply gravity in -y to move node 1; pin node 0 (inv_mass=0)
     push_set_param(ctx, s, "gravity_y", -9.8f);
@@ -245,12 +250,12 @@ static int test_per_edge_compliance() {
     std::vector<Vec3> vel = { {0,0,0}, {1.0f,0,0} };
     std::vector<uint32_t> edges = { 0,1 };
     // Baseline solver (stiff)
-    BuildDesc bdA = make_build_desc_basic(pos, &vel, edges, nullptr, /*substeps*/1, /*iterations*/10, /*damping*/0.0f);
-    auto resA = sim::create(bdA); if (resA.status != Status::Ok || !resA.value) return 1;
+    BuildHolder ah{}; setup_build_basic(ah, pos, &vel, edges, nullptr, /*substeps*/1, /*iterations*/10, /*damping*/0.0f);
+    auto resA = sim::create(ah.desc); if (resA.status != Status::Ok || !resA.value) return 1;
     Solver* sA = resA.value; TestContext ctxA{};
     // Compliant solver with high per-edge compliance
-    BuildDesc bdB = make_build_desc_basic(pos, &vel, edges, nullptr, /*substeps*/1, /*iterations*/10, /*damping*/0.0f);
-    auto resB = sim::create(bdB); if (resB.status != Status::Ok || !resB.value) { sim::destroy(sA); return 2; }
+    BuildHolder bh{}; setup_build_basic(bh, pos, &vel, edges, nullptr, /*substeps*/1, /*iterations*/10, /*damping*/0.0f);
+    auto resB = sim::create(bh.desc); if (resB.status != Status::Ok || !resB.value) { sim::destroy(sA); return 2; }
     Solver* sB = resB.value; TestContext ctxB{};
     // Set per-edge compliance for the only edge
     push_set_field_region_scalar(ctxB, sB, "distance_compliance_edge", 0, 1, 1e-2f);
@@ -273,8 +278,8 @@ static int test_copy_positions() {
     std::vector<Vec3> pos = { {10,20,30}, {40,50,60}, {70,80,90} };
     std::vector<Vec3> vel; // none
     std::vector<uint32_t> edges; // none
-    BuildDesc bd = make_build_desc_basic(pos, nullptr, edges, nullptr, /*substeps*/1, /*iterations*/1, /*damping*/0.0f);
-    auto res = sim::create(bd); if (res.status != Status::Ok || !res.value) return 1;
+    BuildHolder bh{}; setup_build_basic(bh, pos, nullptr, edges, nullptr, /*substeps*/1, /*iterations*/1, /*damping*/0.0f);
+    auto res = sim::create(bh.desc); if (res.status != Status::Ok || !res.value) return 1;
     Solver* s = res.value;
     std::vector<float> buf(9, 0.0f); size_t outN=0;
     if (sim::copy_positions(s, buf.data(), 0, &outN) != Status::Ok) { sim::destroy(s); return 2; }
