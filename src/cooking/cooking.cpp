@@ -1,5 +1,6 @@
 #include "cooking.h"
 #include "core/common/utils.h"
+#include "core/common/types.h"
 
 #include <cstdint>
 #include <cstring>
@@ -10,6 +11,8 @@
 #include <algorithm>
 
 namespace sim {
+    using namespace eng;
+
     static const void* find_field(const StateInit& st, const char* name, size_t comps, size_t& count, size_t& stride) {
         for (size_t i = 0; i < st.field_count; i++) {
             auto& f = st.fields[i];

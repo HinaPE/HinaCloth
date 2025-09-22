@@ -1,4 +1,5 @@
 #include "step.h"
+#include "runtime/step_eng.h"
 #include "core/model/model.h"
 #include "core/data/data.h"
 #include "backend/storage/soa.h"
@@ -9,7 +10,6 @@
 #include "backend/kernel/constraints/distance_aosoa.h"
 #include "backend/kernel/constraints/attachment.h"
 #include "backend/kernel/constraints/bending.h"
-#include "adapter/engine_adapter.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -18,7 +18,9 @@
 #include <tbb/global_control.h>
 #endif
 
-namespace sim {
+namespace sim { namespace eng {
+    using ::sim::Model; using ::sim::Data;
+
     static void integrate_pred(Data& d, float dt) {
         std::size_t n = d.x.size();
         for (std::size_t i = 0; i < n; i++) {
@@ -170,7 +172,6 @@ namespace sim {
     }
 
     static double compute_distance_residual(const Model& m, const Data& d) {
-        // Average absolute violation |len - rest| over finite edges only
         const std::size_t ecount = m.rest.size();
         if (ecount == 0) return 0.0;
         double acc = 0.0;
@@ -209,9 +210,7 @@ namespace sim {
         float dt_sub = dt / (float) substeps;
         for (int s = 0; s < substeps; ++s) {
             integrate_pred(d, dt_sub);
-            // PreSolve: attachment to predicted positions (SoA)
             presolve_apply_attachment(d);
-            // Prepare per-edge alpha for this substep if per-edge compliance is present
             prepare_alpha_edge(m, d, dt_sub);
             if (d.exec_layout_blocked) {
                 if (d.pos_aosoa.empty()) {
@@ -225,7 +224,6 @@ namespace sim {
             } else {
                 project_distance_islands_soa(m, d, dt_sub, iterations);
             }
-            // Optional bending pass (SoA)
             bending_pass(m, d, dt_sub, iterations);
             finalize(d, dt_sub, damping);
         }
@@ -237,5 +235,29 @@ namespace sim {
             out->solve_iterations = iterations;
         }
         return Status::Ok;
+    }
+}}
+
+namespace sim {
+    static inline ::sim::Status to_api_status(eng::Status s) {
+        using ES = eng::Status; using AS = ::sim::Status;
+        switch (s) {
+            case ES::Ok: return AS::Ok;
+            case ES::InvalidArgs: return AS::InvalidArgs;
+            case ES::ValidationFailed: return AS::ValidationFailed;
+            case ES::NoBackend: return AS::NoBackend;
+            case ES::Unsupported: return AS::Unsupported;
+            case ES::OOM: return AS::OOM;
+            case ES::NotReady: return AS::NotReady;
+            case ES::Busy: return AS::Busy;
+            default: return AS::Unsupported;
+        }
+    }
+
+    Status runtime_step(const Model& m, Data& d, float dt, const SolveOverrides* ovr, TelemetryFrame* out) {
+        auto st = eng::runtime_step(m, d, dt,
+                                    reinterpret_cast<const eng::SolveOverrides*>(ovr),
+                                    reinterpret_cast<eng::TelemetryFrame*>(out));
+        return to_api_status(st);
     }
 }

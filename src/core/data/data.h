@@ -1,11 +1,10 @@
 #ifndef HINACLOTH_DATA_H
 #define HINACLOTH_DATA_H
 #include <vector>
+#include "core/common/types.h"
 
 namespace sim {
     struct Model;
-    struct BuildDesc;
-    struct Command;
     struct RemapPlan;
 
     struct Data {
@@ -52,8 +51,8 @@ namespace sim {
         std::vector<float> attach_tz;
     };
 
-    bool core_data_create_from_state(const BuildDesc& in, const Model& m, Data*& out);
-    bool core_data_apply_overrides(Data& d, const Command* cmds, size_t count);
+    bool core_data_create_from_state(const eng::BuildDesc& in, const Model& m, Data*& out);
+    bool core_data_apply_overrides(Data& d, const eng::Command* cmds, size_t count);
     bool core_data_apply_remap(const Data& oldd, const RemapPlan& plan, Data*& newd);
     void core_data_destroy(Data* d);
 }

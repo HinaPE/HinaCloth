@@ -1,25 +1,25 @@
-#include "api/capability.h"
-#include "api/policy_in.h"
+#include "capability_eng.h"
+#include "core/common/types.h"
 
-namespace sim {
-    size_t enumerate_capabilities(Capability* out, size_t cap) {
-        Capability list[6];
+namespace sim { namespace eng {
+    size_t enumerate_capabilities(eng::Capability* out, size_t cap) {
+        eng::Capability list[6];
         size_t n = 0;
         // Always present: Native + SoA
-        list[n++] = Capability{Backend::Native, DataLayout::SoA, "native_soa"};
-        // Native + Blocked (AoSoA) supported by runtime if chosen
-        list[n++] = Capability{Backend::Native, DataLayout::Blocked, "native_blocked"};
+        list[n++] = eng::Capability{eng::Backend::Native, eng::DataLayout::SoA, "native_soa"};
+        // Native + Blocked (AoSoA)
+        list[n++] = eng::Capability{eng::Backend::Native, eng::DataLayout::Blocked, "native_blocked"};
     #if defined(HINACLOTH_HAVE_AVX2)
-        list[n++] = Capability{Backend::AVX2, DataLayout::SoA, "avx2_soa"};
-        list[n++] = Capability{Backend::AVX2, DataLayout::Blocked, "avx2_blocked"};
+        list[n++] = eng::Capability{eng::Backend::AVX2, eng::DataLayout::SoA, "avx2_soa"};
+        list[n++] = eng::Capability{eng::Backend::AVX2, eng::DataLayout::Blocked, "avx2_blocked"};
     #endif
     #if defined(HINACLOTH_HAVE_TBB)
-        list[n++] = Capability{Backend::TBB, DataLayout::SoA, "tbb_soa"};
-        list[n++] = Capability{Backend::TBB, DataLayout::Blocked, "tbb_blocked"};
+        list[n++] = eng::Capability{eng::Backend::TBB, eng::DataLayout::SoA, "tbb_soa"};
+        list[n++] = eng::Capability{eng::Backend::TBB, eng::DataLayout::Blocked, "tbb_blocked"};
     #endif
         if (!out || cap == 0) return n;
         size_t k = n < cap ? n : cap;
         for (size_t i = 0; i < k; i++) out[i] = list[i];
         return n;
     }
-}
+}}

@@ -1,42 +1,82 @@
 #include "engine_adapter.h"
 
 #include "api/sim.h"
+#include "core/common/types.h"
 #include "core/data/data.h"
 #include "core/model/model.h"
+#include "cooking/cooking.h"
+#include "backend/registry/registry.h"
+#include "runtime/step_eng.h"
 #include <cstddef>
 #include <new>
 #include <cstdint>
+#include <vector>
 
 namespace sim {
-    struct Model;
-    struct Data;
-    struct RemapPlan;
-    struct Solver;
-    bool cooking_build_model(const BuildDesc& in, Model*& out);
-    bool cooking_rebuild_model_from_commands(const Model& cur, const Command* cmds, size_t count, Model*& out, RemapPlan*& plan);
-    bool core_data_create_from_state(const BuildDesc& in, const Model& m, Data*& out);
-    bool core_data_apply_overrides(Data& d, const Command* cmds, size_t count);
-    bool core_data_apply_remap(const Data& oldd, const RemapPlan& plan, Data*& newd);
-    void core_model_destroy(Model* m);
-    void core_data_destroy(Data* d);
-    void core_remapplan_destroy(RemapPlan* p);
-    bool backends_choose(const Model& m, const PolicyExec& exec, struct Chosen& out);
-    Status runtime_step(const Model& m, Data& d, float dt, const SolveOverrides* ovr, TelemetryFrame* out);
+    // API-facing forward declarations (implemented in shell)
+    // struct Chosen; // from api/sim.h
     // cache tracker (shell)
     [[nodiscard]] bool shell_cache_query(uint64_t& key_out);
     [[nodiscard]] bool shell_cache_load(uint64_t key, Model*& out);
     void shell_cache_store(uint64_t key, const Model& m);
+}
+
+namespace sim {
+    using namespace eng;
+
+    // Map engine Status to API Status
+    static inline ::sim::Status to_api_status(eng::Status s) {
+        switch (s) {
+            case eng::Status::Ok:              return ::sim::Status::Ok;
+            case eng::Status::InvalidArgs:     return ::sim::Status::InvalidArgs;
+            case eng::Status::ValidationFailed:return ::sim::Status::ValidationFailed;
+            case eng::Status::NoBackend:       return ::sim::Status::NoBackend;
+            case eng::Status::Unsupported:     return ::sim::Status::Unsupported;
+            case eng::Status::OOM:             return ::sim::Status::OOM;
+            case eng::Status::NotReady:        return ::sim::Status::NotReady;
+            case eng::Status::Busy:            return ::sim::Status::Busy;
+            default:                           return ::sim::Status::Unsupported;
+        }
+    }
+
+    // Mapping helpers between API (shell) and engine types
+    static inline eng::PolicyExec map_policy_exec(const ::sim::PolicyExec& a) {
+        eng::PolicyExec e{}; e.layout = (eng::DataLayout)a.layout; e.backend = (eng::Backend)a.backend; e.threads = a.threads; e.deterministic = a.deterministic; e.telemetry = a.telemetry; return e;
+    }
+    static inline eng::PolicySolve map_policy_solve(const ::sim::PolicySolve& a) {
+        eng::PolicySolve e{}; e.substeps = a.substeps; e.iterations = a.iterations; e.damping = a.damping; e.stepper = (eng::TimeStepper)a.stepper; return e;
+    }
+    static inline eng::BuildDesc map_build_desc(const ::sim::BuildDesc& a) {
+        eng::BuildDesc b{};
+        // shallow views copy
+        b.state.fields = reinterpret_cast<const eng::FieldView*>(a.state.fields); b.state.field_count = a.state.field_count;
+        b.params.items = reinterpret_cast<const eng::Param*>(a.params.items); b.params.count = a.params.count;
+        b.topo.node_count = a.topo.node_count; b.topo.relations = reinterpret_cast<const eng::RelationView*>(a.topo.relations); b.topo.relation_count = a.topo.relation_count;
+        b.policy.exec = map_policy_exec(a.policy.exec);
+        b.policy.solve = map_policy_solve(a.policy.solve);
+        b.space = {}; b.ops = {}; b.events = {};
+        b.validate = (eng::ValidateLevel)a.validate;
+        b.pack.lazy_pack = a.pack.lazy_pack; b.pack.block_size = a.pack.block_size;
+        return b;
+    }
+    static inline void map_chosen_to_api(const eng::Chosen& e, ::sim::Chosen& o) {
+        o.layout = (::sim::DataLayout) e.layout; o.backend = (::sim::Backend) e.backend; o.threads = e.threads;
+    }
+    static inline void map_commands_to_eng(const ::sim::Command* in, size_t count, std::vector<eng::Command>& out) {
+        out.resize(count);
+        for (size_t i = 0; i < count; ++i) { out[i].tag = (eng::CommandTag) in[i].tag; out[i].data = in[i].data; out[i].bytes = in[i].bytes; }
+    }
 
     struct EngineHandle {
         Model* model;
         Data* data;
-        Chosen chosen;
+        eng::Chosen chosen;
         int threads;
         unsigned long long applied;
         unsigned long long rebuilds;
     };
 
-    EngineHandle* engine_create(const BuildDesc& desc) {
+    EngineHandle* engine_create(const ::sim::BuildDesc& desc) {
         EngineHandle* e = new(std::nothrow) EngineHandle();
         if (!e) return nullptr;
         e->model    = nullptr;
@@ -50,28 +90,31 @@ namespace sim {
         bool have_key = shell_cache_query(key);
         if (have_key) {
             if (!shell_cache_load(key, m)) {
-                if (!cooking_build_model(desc, m)) {
+                eng::BuildDesc bd = map_build_desc(desc);
+                if (!cooking_build_model(bd, m)) {
                     delete e;
                     return nullptr;
                 }
                 shell_cache_store(key, *m);
             }
         } else {
-            if (!cooking_build_model(desc, m)) {
+            eng::BuildDesc bd = map_build_desc(desc);
+            if (!cooking_build_model(bd, m)) {
                 delete e;
                 return nullptr;
             }
         }
         Data* d = nullptr;
-        if (!core_data_create_from_state(desc, *m, d)) {
+        eng::BuildDesc bd = map_build_desc(desc);
+        if (!core_data_create_from_state(bd, *m, d)) {
             core_model_destroy(m);
             delete e;
             return nullptr;
         }
         e->model = m;
         e->data  = d;
-        Chosen ch{};
-        if (!backends_choose(*m, desc.policy.exec, ch)) {
+        eng::Chosen ch{};
+        if (!eng::backends_choose(*m, bd.policy.exec, ch)) {
             core_data_destroy(d);
             core_model_destroy(m);
             delete e;
@@ -80,11 +123,10 @@ namespace sim {
         e->chosen = ch;
         // Propagate chosen backend/layout into Data
         if (d) {
-            d->exec_use_avx2       = (ch.backend == Backend::AVX2);
-            d->exec_use_tbb        = (ch.backend == Backend::TBB);
+            d->exec_use_avx2       = (ch.backend == eng::Backend::AVX2);
+            d->exec_use_tbb        = (ch.backend == eng::Backend::TBB);
             d->exec_threads        = (ch.threads <= 0) ? -1 : ch.threads;
-            d->exec_layout_blocked = (ch.layout == DataLayout::Blocked);
-            // Ensure AoSoA buffer sized if needed
+            d->exec_layout_blocked = (ch.layout == eng::DataLayout::Blocked);
             if (d->exec_layout_blocked) {
                 unsigned int blk = d->layout_block_size > 0 ? d->layout_block_size : (m->layout_block_size > 0 ? m->layout_block_size : 8u);
                 d->layout_block_size = blk;
@@ -103,38 +145,38 @@ namespace sim {
         delete e;
     }
 
-    Status engine_apply_small_params(EngineHandle* e, const Command* cmds, size_t count) {
-        if (!e || !e->data) return Status::InvalidArgs;
-        if (count == 0) return Status::Ok;
-        if (!core_data_apply_overrides(*e->data, cmds, count)) return Status::ValidationFailed;
+    ::sim::Status engine_apply_small_params(EngineHandle* e, const ::sim::Command* cmds, size_t count) {
+        if (!e || !e->data) return ::sim::Status::InvalidArgs;
+        if (count == 0) return ::sim::Status::Ok;
+        std::vector<eng::Command> buf; map_commands_to_eng(cmds, count, buf);
+        if (!core_data_apply_overrides(*e->data, buf.data(), buf.size())) return ::sim::Status::ValidationFailed;
         e->applied += (unsigned long long) count;
-        return Status::Ok;
+        return ::sim::Status::Ok;
     }
 
-    Status engine_apply_structural_changes(EngineHandle* e, const Command* cmds, size_t count) {
-        if (!e || !e->data || !e->model) return Status::InvalidArgs;
+    ::sim::Status engine_apply_structural_changes(EngineHandle* e, const ::sim::Command* cmds, size_t count) {
+        if (!e || !e->data || !e->model) return ::sim::Status::InvalidArgs;
         Model* nm       = nullptr;
         RemapPlan* plan = nullptr;
-        if (!cooking_rebuild_model_from_commands(*e->model, cmds, count, nm, plan)) return Status::ValidationFailed;
+        std::vector<eng::Command> buf; map_commands_to_eng(cmds, count, buf);
+        if (!cooking_rebuild_model_from_commands(*e->model, buf.data(), buf.size(), nm, plan)) return ::sim::Status::ValidationFailed;
         Data* nd = nullptr;
         bool ok  = core_data_apply_remap(*e->data, *plan, nd);
         if (!ok) {
             core_model_destroy(nm);
             core_remapplan_destroy(plan);
-            return Status::ValidationFailed;
+            return ::sim::Status::ValidationFailed;
         }
         core_data_destroy(e->data);
         core_model_destroy(e->model);
         core_remapplan_destroy(plan);
         e->model = nm;
         e->data  = nd;
-        // Stage 4: remap robustness - resize constraint state to new edge count and clear invalid lambdas
         if (e->data) {
             std::size_t ecount = e->model ? (e->model->edges.size() / 2) : 0u;
             e->data->lambda_edge.assign(ecount, 0.0f);
             e->data->distance_alpha_edge.assign(ecount, 0.0f);
             e->data->distance_compliance_edge.assign(ecount, 0.0f);
-            // Ensure AoSoA buffer consistent with layout
             if (e->data->exec_layout_blocked) {
                 unsigned int blk = e->data->layout_block_size > 0 ? e->data->layout_block_size : (e->model && e->model->layout_block_size ? e->model->layout_block_size : 8u);
                 e->data->layout_block_size = blk;
@@ -145,22 +187,29 @@ namespace sim {
         }
         e->rebuilds += 1ull;
         e->applied += (unsigned long long) count;
-        return Status::Ok;
+        return ::sim::Status::Ok;
     }
 
-    Status engine_step(EngineHandle* e, float dt, const SolveOverrides* ovr, TelemetryFrame* out) {
-        if (!e || !e->data || !e->model) return Status::InvalidArgs;
-        return runtime_step(*e->model, *e->data, dt, ovr, out);
+    ::sim::Status engine_step(EngineHandle* e, float dt, const ::sim::SolveOverrides* ovr_api, ::sim::TelemetryFrame* out_api) {
+        if (!e || !e->data || !e->model) return ::sim::Status::InvalidArgs;
+        eng::SolveOverrides ovr{}; if (ovr_api) { ovr.substeps_override = ovr_api->substeps_override; ovr.iterations_override = ovr_api->iterations_override; }
+        eng::TelemetryFrame out{}; eng::TelemetryFrame* pout = out_api ? &out : nullptr;
+        auto st = eng::runtime_step(*e->model, *e->data, dt, ovr_api ? &ovr : nullptr, pout);
+        if (out_api && pout) {
+            out_api->step_ms = out.step_ms; out_api->residual_avg = out.residual_avg; out_api->last_rebuild_ms = out.last_rebuild_ms; out_api->avg_rebuild_ms = out.avg_rebuild_ms;
+            out_api->commands_applied = out.commands_applied; out_api->structural_rebuilds = out.structural_rebuilds; out_api->solve_substeps = out.solve_substeps; out_api->solve_iterations = out.solve_iterations;
+        }
+        return to_api_status(st);
     }
 
-    bool engine_query_chosen(EngineHandle* e, Chosen& out) {
+    bool engine_query_chosen(EngineHandle* e, ::sim::Chosen& out) {
         if (!e) return false;
-        out = e->chosen;
+        map_chosen_to_api(e->chosen, out);
         return true;
     }
 
-    Status engine_copy_positions(EngineHandle* e, float* dst, size_t maxCount, size_t* outCount) {
-        if (!e || !e->data || !dst) return Status::InvalidArgs;
+    ::sim::Status engine_copy_positions(EngineHandle* e, float* dst, size_t maxCount, size_t* outCount) {
+        if (!e || !e->data || !dst) return ::sim::Status::InvalidArgs;
         const Data& d = *e->data;
         size_t n = d.x.size();
         size_t cnt = (maxCount == 0 || maxCount > n) ? n : maxCount;
@@ -170,6 +219,6 @@ namespace sim {
             dst[3*i + 2] = d.z[i];
         }
         if (outCount) *outCount = cnt;
-        return Status::Ok;
+        return ::sim::Status::Ok;
     }
 }
