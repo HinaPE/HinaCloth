@@ -1,375 +1,217 @@
-# HinaCloth 开发者快速上手（仅覆盖 src/ 下实现）
+# HinaCloth 开发者指南（基于当前源码的实证版）
 
-本教程面向刚接手本项目的开发者，按“自顶向下、循序渐进”的方式，带你从最小可跑通的框架开始，一步步启用全部已经实现的功能（仅涉及 src/ 目录内的代码与接口）。
-
-你将学会：如何用对外 API 组装 BuildDesc，创建求解器，注入命令，选择后端与布局，启用/配置算子，拉取遥测，拷贝位置做渲染，并了解各模块的职责与未完成项的路线图。
+本指南面向需要二次开发或集成引擎的工程师，基于对当前源代码的完整走查，给出“能跑、可调、可扩”的最短路径与注意事项。文中所有 API/字段/行为均以仓库现状为准。
 
 ---
 
-## 目录
-- 1. 顶层模块导览（src/ 结构与职责）
-- 2. 最小可运行框架：Hello, Solver
-- 3. 命令系统与相位：BeforeFrame/AfterSolve
-- 4. 固定点（Pin）与区域写入：inv_mass / SetFieldRegion
-- 5. Attachment（目标拉拽）算子
-- 6. XPBD Distance：全局/逐边 Compliance
-- 7. Bending（可选）算子与 bend_pairs
-- 8. 后端/布局/线程：Native/AVX2/TBB × SoA/Blocked
-- 9. 遥测 Telemetry 与位置拷贝用于渲染
-- 10. 能力枚举 enumerate_capabilities
-- 11. 结构性重建（占位实现）与缓存
-- 12. 常见问题与调试窍门
-- 13. 尚未完成的功能与路线图
+## 0. 一句话概览（你将得到什么）
+- 对外极简 API：create/destroy/step/push_command/flush/query_chosen/telemetry_query_frame/copy_positions。
+- MVP 的 XPBD 布料求解：Distance 约束（支持 λ 累积与 α=compliance/dt²）、可选 Attachment 与简化 Bending。
+- 多执行路径：Native 标量、AVX2（gather）、Blocked AoSoA（可与 AVX2 配合），TBB 按岛并行。
+- 模型烹制（Cooking）：从 edges 计算 rest-length，按连通分量重排为 islands；bend_pairs 可选。
+- 运行期命令：全局与分区覆写（gravity/iterations/substeps/damping、inv_mass、per-edge compliance、attachment 目标）。
+- 遥测：每帧 step_ms、平均距离残差、命令/重建计数与 solve 配置回报。
+
+你暂时还得不到：PhaseGraph/颜色/批次的完整并行规划、真正的结构性事件应用（rebuild 现为占位逻辑）、严格确定性调度与细粒度遥测分项。
 
 ---
 
-## 1. 顶层模块导览（src/ 结构与职责）
-
-- api/
-  - sim.h：对外 API。create/destroy/step/push_command/flush_commands/query_chosen/telemetry_query_frame/copy_positions
-  - build.h：BuildDesc 聚合输入。含 state_in.h、parameters_in.h、topology_in.h、policy_in.h、space_in.h、operators_in.h、events_in.h
-  - commands.h：命令枚举与载荷壳（不定形 payload）
-  - capability.h：能力枚举（backend × layout 组合）
-  - status.h / telemetry.h / version.h / ids.h：通用类型
-- shell/
-  - validators.cpp：输入校验（节点数、NaN、边越界、重复边等）
-  - translators.cpp / packers.cpp：单位/字段归一化与打包（当前基本空实现）
-  - cache_tracker.cpp：内容哈希与内存缓存（Model 级）
-  - sim_create.cpp / sim_step.cpp / sim_commands.cpp / sim_readback.cpp：API 薄封装与命令相位应用
-- adapter/
-  - engine_adapter.*：把 shell 输入对接 engine（cooking → model，core/data → data，runtime → step），并封装 rebuild+remap
-- cooking/
-  - cooking.*：从 BuildDesc 生成只读 Model：
-    - 取第一个二元关系为 edges；计算 rest-length
-    - 可选识别 tag="bend_pairs" 的四元关系并计算弯曲目标角
-    - BFS islanding，按岛重排 edges/rest 并记录 offsets
+## 1. 目录和职责（src/）
+- api/：对外头文件（sim.h、build.h、commands.h、policy_in.h、telemetry.h、capability.h、chosen.h、…）。
+- shell/：
+  - validators.cpp：输入校验（position/velocity 结构、NaN 检查；edges 越界/重复检查）。
+  - translators.cpp / packers.cpp：轻量归一化（线程数）与占位打包。
+  - cache_tracker.cpp：内容哈希与进程内 Model 缓存（命中则跳过烹制）。
+  - sim_*.cpp：API 薄封装、命令分流（BeforeFrame/AfterSolve）、遥测聚合。
+- cooking/：cooking.cpp/h
+  - 从 State/Topology 生成 Model：edges、rest-length、islanding 与重排、可选 bend_pairs 与弯曲目标角。
+  - rebuild 占位：复制现有 Model + 恒等 RemapPlan。
 - core/
-  - model/：Model 只读结构
-  - data/：Data 可变状态与 overrides（inv_mass、lambda、attachment、solve 参数等）；remap
-  - common/utils.h：向量工具
+  - model/：只读 Model（node_count、edges、rest、island_offsets、node_remap、layout_block_size、bend_pairs）。
+  - data/：时变 Data（x/y/z、v、p、inv_mass、λ_edge、global/per-edge compliance、AoSoA 缓冲、attachment 数据、solve/exec 选项）；remap。
 - backend/
-  - storage/：SoA 视图与 AoSoA（blocked）打包/解包
-  - kernel/constraints/：distance（标量/AVX2/AoSoA）、attachment、bending
-  - registry/：后端选择与能力枚举；CPU AVX2 检测
-  - scheduler/：seq 已内联在 runtime 使用；tbb.cpp 为 TODO（并行在 runtime 中直接用 tbb::parallel_for）
+  - storage/：SoA 视图、AoSoA 打包/解包与块访问工具。
+  - kernel/constraints/：distance（标量/AVX2/AoSoA）、attachment、bending（简化）。
+  - registry/：根据 Policy.exec 与 CPU 能力选择 backend/layout/threads。
 - runtime/
-  - step.*：帧编排（子步→预测→PreSolve 附着→距离投影→可选弯曲→更新速度），采样 Telemetry
-  - phases.* / apply_events.*：占位
+  - step.*：帧编排，集成/TBB 并行/约束投影/阻尼/遥测回报。
 
 ---
 
-## 2. 最小可运行框架：Hello, Solver
+## 2. 快速上手（最小可运行）
+输入契约（必须项）：
+- StateInit：position（或别名 pos/positions），Vec3 AoS（components=3），count==node_count。
+- TopologyIn：第一个 RelationView 作为边列表（arity=2，tag 建议为 "edges"）。
 
-目标：以最少输入跑通一帧。仅需 position（Vec3，AoS 格式）、edges（二元关系）。
+可选：
+- velocity（Vec3）；bend_pairs（arity=4，tag="bend_pairs"）。
+- Policy/Parameters 可使用默认。
 
-契约小抄：
-- 必填 StateInit.field: name="position"（或别名："pos"/"positions"），components=3，stride_bytes=sizeof(float)*3 或更大
-- 可选 StateInit.field: name="velocity"（Vec3）
-- 拓扑 TopologyIn：第一个 RelationView 作为边列表（arity=2），tag 建议 "edges"
-- 参数 Parameters：可为空
-- Policy.solve：substeps>=1，iterations>=0；Policy.exec 可 Auto
-
-示例片段（C++，仅引用 src/api/*）：
+示例（仅依赖 src/api/*）：
 
 ```cpp
 #include "src/api/sim.h"
 #include "src/api/build.h"
 #include <vector>
 using namespace sim;
-
 struct Float3 { float x,y,z; };
-
 int main(){
-    // 2 nodes, one edge (0-1)
-    std::vector<Float3> positions = { {0,0,0}, {1,0,0} };
-    std::vector<uint32_t> edges   = { 0,1 };
-
-    FieldView fields[1] = {
-        { "position", FieldType::F32, positions.data(), positions.size(), 3, sizeof(Float3) }
-    };
-    StateInit state{ fields, 1 };
-
-    RelationView relations[1] = { { edges.data(), 2, 1, "edges" } };
-    TopologyIn topo{ (uint32_t)positions.size(), relations, 1 };
-
-    // 默认策略（Auto）
-    Policy policy{}; policy.exec.layout = DataLayout::Auto; policy.exec.backend = Backend::Auto;
-    policy.exec.threads = -1; policy.exec.deterministic = false; policy.exec.telemetry = true;
-    policy.solve.substeps = 1; policy.solve.iterations = 8; policy.solve.damping = 0.0f; policy.solve.stepper = TimeStepper::Symplectic;
-
-    BuildDesc desc{}; desc.state = state; desc.topo = topo; desc.policy = policy; desc.validate = ValidateLevel::Strict;
-
-    auto r = create(desc);
-    if (r.status != Status::Ok) return -1;
-    Solver* s = r.value;
-
-    // 运行一步
-    step(s, 1.0f/60.0f);
-
-    // 查询遥测
-    TelemetryFrame tf{}; telemetry_query_frame(s, &tf);
-
-    // 提取位置（interleaved float3: x,y,z）
-    std::vector<float> out(positions.size()*3);
-    size_t count = 0; copy_positions(s, out.data(), 0, &count);
-
-    destroy(s);
-    return 0;
-}
+  std::vector<Float3> pos = {{0,0,0},{1,0,0}};
+  std::vector<uint32_t> edges = {0,1};
+  FieldView fields[] = {{"position", FieldType::F32, pos.data(), pos.size(), 3, sizeof(Float3)}};
+  StateInit state{fields, 1};
+  RelationView rels[] = {{edges.data(), 2, 1, "edges"}};
+  TopologyIn topo{(uint32_t)pos.size(), rels, 1};
+  Policy policy{}; // 默认：Auto 选择 backend/layout，solve 迭代/子步可为 8/1
+  BuildDesc desc{}; desc.state=state; desc.topo=topo; desc.policy=policy; desc.validate=ValidateLevel::Strict;
+  auto r = create(desc); if(r.status!=Status::Ok) return -1; Solver* s=r.value;
+  step(s, 1.0f/60.0f);
+  TelemetryFrame tf{}; telemetry_query_frame(s, &tf);
+  std::vector<float> out(pos.size()*3); size_t n=0; copy_positions(s, out.data(), 0, &n);
+  destroy(s); return 0; }
 ```
 
-要点：
-- 校验在 shell/validators.cpp 完成，Strict 模式会检查 NaN、边越界与重复边（重复边在严格模式下视为错误）。
-- cooking 会计算每条边的 rest-length，并按连通分量重排（island_offsets）。
+验证器会检查：
+- position/velocity 的 components、count、stride（Strict 模式也会拒绝 strides 小于 components*sizeof(float)）。
+- position/velocity 含 NaN → 拒绝。
+- edges 越界与重复（Strict 模式重复视为错误）。
 
 ---
 
-## 3. 命令系统与相位：BeforeFrame/AfterSolve
+## 3. 运行时命令与相位（BeforeFrame/AfterSolve）
+通过 push_command → flush_commands 应用。BeforeFrame 会分流：
+- 小参数覆写（立即生效，不触发重建）：
+  - SetParam：gravity_x/y/z、distance_compliance、iterations、substeps、damping。
+  - EnableOperator/DisableOperator："attachment"、"bending"。
+  - SetFieldRegion：
+    - "inv_mass"（节点范围写入，0 表示固定点）
+    - "attach_w"、"attach_target"（目标拉拽）
+    - "distance_compliance_edge"（逐边柔度）
+- 结构性命令（当前触发重建但不改变拓扑，见第 9 章）：Add/RemoveNodes、Add/RemoveRelations。
 
-命令通过 push_command 排队，再用 flush_commands 按相位应用：
-- BeforeFrame：在本帧 simulation 之前应用。会把“结构性”命令拆出来触发 rebuild（当前为占位实现，详见第 11 章）。
-- AfterSolve：在本帧求解后应用。
-
-已实现的“小参数/覆盖”命令（engine_apply_small_params → core_data_apply_overrides）：
-- SetParam: name/value 二元载荷（gravity_x/y/z、distance_compliance、iterations、substeps、damping）
-- EnableOperator / DisableOperator: op = "attachment" / "bending"
-- SetFieldRegion: 对区间写入 inv_mass、attach_w、attach_target、distance_compliance_edge
-
-辅助函数（构造命令载荷）：
-
+辅助构造函数（示例写法）：
 ```cpp
-static Command make_set_param(const char* name, float v){
-    struct Payload { const char* n; float v; } p{ name, v };
-    return Command{ CommandTag::SetParam, &p, sizeof(p) };
-}
-static Command make_enable(const char* op){ return Command{ CommandTag::EnableOperator, &op, sizeof(op) }; }
-static Command make_disable(const char* op){ return Command{ CommandTag::DisableOperator, &op, sizeof(op) }; }
-static Command make_set_region(const char* field, uint32_t start, uint32_t count, float x, float y=0, float z=0){
-    struct Payload { const char* f; uint32_t s; uint32_t c; float v[3]; } p{ field, start, count, {x,y,z} };
-    return Command{ CommandTag::SetFieldRegion, &p, sizeof(p) };
-}
-```
-
-示例：把重力改为 -20 m/s^2 并将迭代数设置为 12：
-
-```cpp
-push_command(s, make_set_param("gravity_y", -20.0f));
-push_command(s, make_set_param("iterations", 12));
-flush_commands(s, ApplyPhase::BeforeFrame);
-step(s, 1.0f/60.0f);
+static Command set_param(const char* name, float v){ struct P{const char* n; float v;} p{name,v}; return {CommandTag::SetParam,&p,sizeof(p)}; }
+static Command enable(const char* op){ return {CommandTag::EnableOperator,&op,sizeof(op)}; }
+static Command set_region(const char* field,uint32_t s,uint32_t c,float x,float y=0,float z=0){ struct P{const char* f;uint32_t s,c;float v[3];} p{field,s,c,{x,y,z}}; return {CommandTag::SetFieldRegion,&p,sizeof(p)}; }
 ```
 
 ---
 
-## 4. 固定点（Pin）与区域写入：inv_mass / SetFieldRegion
-
-Data.inv_mass[i] == 0 表示该节点被固定（不可动）。可通过 SetFieldRegion 批量写入：
-
-```cpp
-// 固定前 10 个点
-push_command(s, make_set_region("inv_mass", 0, 10, 0.0f));
-flush_commands(s, ApplyPhase::BeforeFrame);
-step(s, dt);
-```
-
-提示：inv_mass 非 0 的点会被积分与投影更新；固定点在 integrate 与 finalize 阶段都会维持位置与零速度。
+## 4. XPBD Distance（带 λ 累积与 α=compliance/dt²）
+- 全局柔度：SetParam("distance_compliance", value)。
+- 逐边柔度：SetFieldRegion("distance_compliance_edge", start, count, value)。
+- 引擎在每个子步前计算 per-edge α（α=edge_or_global_compliance / dt_sub²）。
+- 约束核：
+  - 标量 SoA：`kernel_distance_project`（支持 inv_mass、λ_edge、alpha_edge）。
+  - AVX2 SoA gather：`kernel_distance_project_avx2`（编译期 HINACLOTH_HAVE_AVX2 + 运行期 CPU 支持）。
+  - AoSoA Blocked：`kernel_distance_project_aosoa`（块内线性、跨块 gather）。
+- 岛并行：按 `Model.island_offsets` 将边分块；若开启 TBB，则对岛粒度 `parallel_for`。
 
 ---
 
-## 5. Attachment（目标拉拽）算子
-
-Attachment 在 PreSolve 阶段把预测位置往目标位置（tx,ty,tz）拉，权重 attach_w ∈ [0,1]：
-
-启用与配置：
-
-```cpp
-push_command(s, make_enable("attachment"));
-// 全节点应用，权重 0.2，目标为抬高 0.5m
-push_command(s, make_set_region("attach_w", 0, node_count, 0.2f));
-push_command(s, make_set_region("attach_target", 0, node_count, 0.0f, 0.5f, 0.0f));
-flush_commands(s, ApplyPhase::BeforeFrame);
-step(s, dt);
-```
-
-实现对应：backend/kernel/constraints/attachment.*，在 runtime/step.cpp 的 presolve_apply_attachment 中调用。
+## 5. Attachment（目标拉拽）与固定点（inv_mass=0）
+- EnableOperator("attachment") 后生效。
+- SetFieldRegion("attach_w") 写入权重 [0,1]；SetFieldRegion("attach_target") 写入目标位置。
+- 核：`kernel_attachment_apply` 在预估位（px,py,pz）上直接插值；inv_mass==0 的点跳过。
+- 固定点：SetFieldRegion("inv_mass", i, count, 0.0f)。固定点在积分与 finalize 均保持位置、速度置 0。
 
 ---
 
-## 6. XPBD Distance：全局/逐边 Compliance
-
-Distance 约束实现为 XPBD 形式（带 λ 累积与 α=compliance/dt^2）：
-- 全局 compliance：Parameters 或 SetParam("distance_compliance", value)
-- 逐边 compliance：SetFieldRegion("distance_compliance_edge", start, count, value)
-
-示例：设置全局柔度 1e-6，并对前 100 条边更软：
-
-```cpp
-push_command(s, make_set_param("distance_compliance", 1e-6f));
-push_command(s, make_set_region("distance_compliance_edge", 0, 100, 5e-6f));
-flush_commands(s, ApplyPhase::BeforeFrame);
-step(s, dt);
-```
-
-实现对应：
-- backend/kernel/constraints/distance.*（标量/AVX2）
-- backend/kernel/constraints/distance_aosoa.*（Blocked 布局）
-- runtime/step.cpp 中 prepare_alpha_edge 负责 per-edge α 计算；迭代过程中使用 λ 缓冲（Data.lambda_edge）。
+## 6. Bending（简化版）
+- 可选输入 bend_pairs（arity=4，tag="bend_pairs"）。Cooking 计算 `bend_rest_angle`。
+- EnableOperator("bending") 后，`kernel_bending_project` 以简单刚度 k=0.1 迭代拉回目标角（非完整 XPBD 形式）。
 
 ---
 
-## 7. Bending（可选）算子与 bend_pairs
+## 7. 执行策略：后端 × 布局 × 线程
+- 选择逻辑（backend/registry）：
+  - Backend::Auto → 若编译期支持 AVX2 且 CPU 检测到 AVX2，则选 AVX2，否则 Native。
+  - DataLayout::Auto → 若 Backend==AVX2，默认 Blocked（AoSoA），否则 SoA。
+  - 线程：threads==0 视为自动（-1）。
+- 运行期：
+  - `Data.exec_use_avx2 / exec_layout_blocked / exec_use_tbb` 由选择结果驱动。
+  - Blocked 路径在每个子步进行 SoA ↔ AoSoA 打包/解包（storage/aosoa.*）。
+  - TBB 并行当前在 runtime/step.cpp 内部按 island 粒度调用 `tbb::parallel_for`（无独立 scheduler/tbb.cpp）。
 
-如果拓扑传入 tag="bend_pairs" 的四元关系（每条 [i0,i1,i2,i3]），cooking 会预计算弯曲目标角；在运行时启用 "bending" 算子即可调用标量核（简化版）：
-
-```cpp
-// 构造 bend_pairs（例如一个四元组构成两三角共享边 i0-i1 的铰链）
-std::vector<uint32_t> bend_pairs = { i0, i1, i2, i3 };
-RelationView rels[2] = {
-  { edges.data(), 2, edge_count, "edges" },
-  { bend_pairs.data(), 4, 1, "bend_pairs" }
-};
-TopologyIn topo{ node_count, rels, 2 };
-
-// 创建 solver 后启用 bending
-push_command(s, make_enable("bending"));
-flush_commands(s, ApplyPhase::BeforeFrame);
-step(s, dt);
-```
-
-实现对应：cooking/cooking.cpp 预计算 bend_rest_angle；runtime/step.cpp 的 bending_pass 调用 backend/kernel/constraints/bending.*（简化的迭代投影）。
+编译开关：
+- AVX2：定义 HINACLOTH_HAVE_AVX2 并使用支持 AVX2 的编译器/平台。
+- TBB：定义 HINACLOTH_HAVE_TBB 并正确链接 oneTBB。
 
 ---
 
-## 8. 后端/布局/线程：Native/AVX2/TBB × SoA/Blocked
-
-后端选择在创建时完成，实际选择结果可 query：
-- Backend::Auto：若编译期具备 AVX2（HINACLOTH_HAVE_AVX2），优先选择 AVX2；否则 Native
-- DataLayout::Auto：若后端为 AVX2，默认 Blocked（AoSoA）；否则 SoA
-- TBB（如果编译为 HINACLOTH_HAVE_TBB 且 Backend::TBB）：runtime 在按 island 并行，使用 tbb::parallel_for（并非 scheduler/tbb.cpp）
-
-设置策略并查询：
-
-```cpp
-Policy p{}; p.exec.backend = Backend::Auto; p.exec.layout = DataLayout::Auto; p.exec.threads = -1; // -1 表示自动
-BuildDesc d{}; d.policy = p; // 省略其余赋值
-auto r = create(d); Solver* s = r.value;
-auto chosen = query_chosen(s);
-// chosen.value.backend/layout/threads 给出实际选择
-```
-
-提示：
-- Blocked 布局的块大小来源：BuildDesc.pack.block_size 或 Model.layout_block_size（默认 8）。
-- AoSoA 会在子步前后进行 SoA<->AoSoA 打包/解包（backend/storage/aosoa.*）。
+## 8. 帧编排与遥测
+- 每帧：
+  1) integrate_pred：重力积分到预测位置（px,py,pz）。
+  2) presolve：若启用 Attachment，按目标拉拽预测位置。
+  3) prepare_alpha_edge：按 dt_sub 计算 α。
+  4) project distance（SoA/AVX2/AoSoA）+ 可选 bending。
+  5) finalize：根据 (p - x)/dt 更新速度，应用阻尼（solve.damping∈[0,1]），提交位置。
+- 子步/迭代：由 `Policy.solve` 或运行期覆写决定（SolveOverrides）。
+- TelemetryFrame：`step_ms`、`residual_avg`（平均 |len-rest|）、`solve_substeps`、`solve_iterations`，以及 `commands_applied/structural_rebuilds/last_rebuild_ms/avg_rebuild_ms`。
+- 读回位置：`copy_positions`（interleaved float3）。
 
 ---
 
-## 9. 遥测 Telemetry 与位置拷贝用于渲染
-
-每帧 step 后可读取 TelemetryFrame：
-- step_ms：总帧耗时
-- residual_avg：距离约束的平均绝对残差 |len - rest|
-- last_rebuild_ms / avg_rebuild_ms：最近/平均重建耗时（通过 flush 的结构性命令触发）
-- commands_applied / structural_rebuilds：累计计数
-- solve_substeps / solve_iterations：实际使用的子步/迭代次数
-
-位置拷贝：copy_positions 会把当前世界空间 positions（x,y,z interleaved）拷到外部缓冲（可直接喂渲染）。
-
----
-
-## 10. 能力枚举 enumerate_capabilities
-
-在创建前可枚举构建时支持的组合（不依赖具体 Model）：
-
-```cpp
-#include "src/api/capability.h"
-std::vector<Capability> caps(16);
-size_t n = enumerate_capabilities(caps.data(), caps.size());
-for(size_t i=0;i<n;++i){ /* caps[i].backend, caps[i].layout, caps[i].name */ }
-```
+## 9. Cooking 与结构性重建（占位实现）
+- 初次构建：
+  - 从 edges 计算 rest-length，BFS 求连通分量；按岛重排 edges/rest，输出 `island_offsets`。
+  - 可选 bend_pairs → 计算 `bend_rest_angle`。
+  - `node_remap` 当前为恒等映射；`layout_block_size` 默认 8 或由 BuildDesc.pack.block_size 指定。
+- 结构命令触发 rebuild：
+  - 当前 cooking_rebuild_model_from_commands 仅复制 Model，不实际应用拓扑变更；RemapPlan 也为恒等。
+  - Remap 后会重置/调整 Data 中与拓扑相关的缓存（λ_edge、per-edge compliance/alpha 等）。
+  - 遥测记录本次重建耗时（`last_rebuild_ms`），并更新平均值。
 
 ---
 
-## 11. 结构性重建（占位实现）与缓存
-
-- 结构性命令（AddNodes/RemoveNodes/AddRelations/RemoveRelations）会被识别为“结构性”，在 flush 时触发 rebuild+remap 流程：
-  - shell/sim_commands.cpp 拆分 small vs structural，并测量 rebuild 耗时写入 Telemetry
-  - adapter/engine_adapter.cpp 调用 cooking_rebuild_model_from_commands（当前未真正应用载荷，仅复制当前 Model）→ core_data_apply_remap（恒等 remap，但会重置/调整部分缓存，如 λ 大小）
-- 缓存：shell/cache_tracker.cpp 根据 BuildDesc 内容计算 hash，并用内存 map 复用已烹制的 Model（同一进程内有效）。
-
-因此，目前你可以用“空载荷”的结构性命令触发重建路径与遥测统计，但不会更改拓扑：
-
-```cpp
-Command dummy{ CommandTag::AddRelations, nullptr, 0 };
-push_command(s, dummy);
-flush_commands(s, ApplyPhase::BeforeFrame);
-TelemetryFrame tf{}; telemetry_query_frame(s, &tf); // tf.last_rebuild_ms > 0
-```
+## 10. 能力枚举与实际选择
+- `enumerate_capabilities`（api/capability.h）：枚举编译期支持的 backend×layout 组合与名字。
+- `query_chosen`：返回实际运行时选择的 backend/layout/threads。
 
 ---
 
-## 12. 常见问题与调试窍门
-
-- 校验失败（create 返回 ValidationFailed）：
-  - 检查 FieldView：name、components=3、stride_bytes 是否正确；position.count 必须等于 node_count
-  - 边越界或重复边（Strict 模式下）：修正 relation 数据或使用 ValidateLevel::Tolerant 观察效果
-- NaN 传播：validators 对 position/velocity 做 NaN 检测；运行时仍应避免在命令中写入 NaN 值
-- TBB 并行无效：需确认编译时定义 HINACLOTH_HAVE_TBB 且 Backend::TBB 或 Policy.exec.backend==TBB；runtime/step.cpp 才会走 tbb::parallel_for
-- AVX2 未启用：需在编译器/平台支持 AVX2 并定义 HINACLOTH_HAVE_AVX2
-- 位置读回：copy_positions 会截断到 maxCount（传 0 表示全部）；目标缓冲大小需 ≥ 3*outCount 浮点
+## 11. 校验与容错要点
+- Strict 模式：
+  - position/velocity 分量与数量必须匹配 node_count；stride 不得小于分量 * sizeof(float)。
+  - edges 越界或重复视为错误；字段含 NaN 视为错误。
+- Tolerant 模式：
+  - 部分异常（如 stride 偏小、重复边）放宽；未知关系 tag 被忽略。
 
 ---
 
-## 13. 尚未完成的功能与路线图
-
-已实现并在本教程覆盖：
-- Shell：严格校验、基本翻译/打包占位、内容哈希与内存缓存
-- Cooking：rest-length、bend_pairs 目标角、islanding 与 edges/rest 重排、layout_block_size
-- Core Data：positions/velocities/predicted、inv_mass、λ 缓冲、全局/逐边 distance compliance、attachment 数据、solve/exec 选项、AoSoA 缓冲
-- Backend Storage：SoA 视图、AoSoA 打包/解包
-- Kernels：distance（标量/AVX2/AoSoA）、attachment（PreSolve）、bending（简化）
-- Runtime：子步、预测、attachment→distance→bending→finalize、SoA/AoSoA 分支、AVX2 路径、TBB island 并行（在 runtime 直接 parallel_for）、Telemetry 采样
-- Registry：Auto 选择（AVX2/Native，布局 SoA/Blocked），capability 枚举
-- API：create/destroy/step/push_command/flush/query_chosen/telemetry_query_frame/copy_positions
-
-尚未完成/差距（与 README 蓝图比）：
-- PhaseGraph/颜色/批次：依据 Operators 的读写集构建阶段与批；当前 runtime 直接串接固定顺序
-- 真正的结构性事件应用：Add/RemoveNodes/Relations 等未在 cooking_rebuild_model_from_commands 中生效
-- Remap 强化：节点增删/边变化时的状态迁移策略（λ 清理、速度/附件状态迁移）
-- Scheduler/tbb：backend/scheduler/tbb.cpp 仍为 TODO；并行逻辑暂在 runtime 内部直接使用 tbb::parallel_for
-- 确定性等级：固定任务划分/稳定归约树/跨线程位级一致的策略未落地（flag 仅占位）
-- 更完整的 validators/translators/packers：单位/坐标归一、别名策略、AoS→中立输入的强健打包
-- LayoutPlan/AoSoA 进阶：重排索引、字段顺序、对齐与预取策略
-- Telemetry 细化：分相位/分批耗时、残差曲线、岛屿规模统计
-- 能力/注册表扩展：结合硬件能力与模型规模更智能地选 backend×layout 组合，GPU 后端
-- 更多算子：Area/Shear/SelfCollision、Attachment/Bending 的 XPBD 合规实现（含 per-constraint λ/α）
-- 持久缓存：Model/Precompute 的磁盘缓存与版本化
-
-建议路线图（迭代里程碑）：
-1) 正确性优先（XPBD 完整化）：
-   - 强化 distance/bending/attachment 为一致的 XPBD 形式（α/λ 一致），完善 per-constraint 状态
-   - 残差/收敛统计加入 Telemetry
-2) 调度与并行：
-   - PhaseGraph/颜色/批次与确定性分块
-   - 抽离 runtime 并行到 scheduler/，实现 tbb.cpp，支持 island→batch 二级调度
-3) 布局与载入：
-   - LayoutPlan（SoA/AoSoA 重排索引、块大小、对齐），Registry 根据 Policy 与 CPU 特性选择
-4) 结构事件：
-   - cooking_rebuild_model_from_commands 真正应用拓扑变更；Remap 迁移矩阵完善
-5) 可观测与缓存：
-   - Telemetry 分相位采样；Model/Precompute 的磁盘缓存与版本策略
-6) 扩展算子与 GPU：
-   - Area/Shear/SelfCollision；探索 GPU 后端与 AoSoA/GPU 友好打包
+## 12. 常见问题与排查
+- 编译无 AVX2 路径：未定义 HINACLOTH_HAVE_AVX2 或 CPU 不支持 AVX2 → 回退到标量路径。
+- TBB 未生效：需定义 HINACLOTH_HAVE_TBB 并正确链接 oneTBB；Policy.exec.backend 设置为 TBB 或 Auto 且 Data.exec_use_tbb==true 才会在 runtime 中并行。
+- 位置读回长度：`copy_positions` 的 maxCount==0 表示输出全部；目标缓冲长度需 ≥ 3*outCount。
+- 残差异常大：检查 rest-length 是否来自初始化位置；确认 dt/substeps/compliance 配置；避免写入 NaN。
 
 ---
 
-附：构建与运行（可选）
+## 13. 现状与路线（简述）
+- 已完成：
+  - 验证器（含 NaN/越界/重复边检测）、模型烹制（islanding + rest）、XPBD Distance（λ/α/逐边柔度）、AoSoA/AVX2、Attachment、简化 Bending、TBB 岛并行、进程内 Model 缓存、基本遥测与读回。
+- 待完善：
+  - PhaseGraph/颜色/批次与确定性分块；scheduler/tbb 抽离；精细遥测；真正的结构事件与 Remap 策略；更强壮的打包/翻译；bending 的 XPBD 化；持久化缓存与版本化。
 
-如需本地快速尝试（Windows cmd）：
+---
+
+## 14. 构建与运行（Windows cmd）
+以下命令基于当前仓库的 CMake 配置；若本地已有 `cmake-build-release` 等目录，可直接用 IDE 运行内置示例。
 
 ```cmd
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
-本教程中的代码示例仅依赖 src/api/* 头文件，便于嵌入你的宿主应用；如需更完整示例，可参考仓库 examples/（不在本教程覆盖范围）。
+可执行产物见构建目录（例如 cmake-build-release/）中的示例与测试二进制。
 
+---
+
+## 15. 附：数据/结构速查（面向开发者）
+- Model：
+  - node_count、edges(2*m)、rest(m)、island_offsets(island_count+1)、bend_pairs(4*k)、bend_rest_angle(k)、layout_block_size。
+- Data（每帧变动）：
+  - x/y/z、vx/vy/vz、px/py/pz、inv_mass(n)、lambda_edge(m)、distance_compliance（全局）/distance_compliance_edge(m)/distance_alpha_edge(m)、solve_substeps/iterations/damping、exec_use_avx2/exec_use_tbb/exec_layout_blocked、layout_block_size、pos_aosoa、attachment（w/tx/ty/tz）。
+
+以上即为以源码为依据的“可落地”开发指南。建议从最小案例开始，逐步引入命令与算子，再切换后端/布局以对比性能与行为。

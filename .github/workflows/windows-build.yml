@@ -16,24 +16,24 @@ jobs:
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Configure (Release, no visualizer, examples+TBB on)
+      - name: Configure (Release, examples+tests, TBB on)
         shell: pwsh
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
-            -DHINACLOTH_WITH_VULKAN_VISUALIZER=OFF `
             -DHINACLOTH_BUILD_EXAMPLES=ON `
+            -DHINACLOTH_BUILD_TESTS=ON `
             -DHINACLOTH_WITH_TBB=ON
 
       - name: Build
         shell: pwsh
         run: cmake --build build --parallel
 
-      - name: Run smoke example (ex00)
+      - name: Run unit tests (ctest)
         shell: pwsh
         run: |
-          ./build/example_ex00_minimal.exe
+          ctest --test-dir build --output-on-failure -j 2
 
-      - name: Run benchmark (ex06)
+      - name: Run smoke example (all_features)
         shell: pwsh
         run: |
-          ./build/example_ex06_bench.exe --nx=16 --ny=16 --frames=10 --iters=8 --subs=1
+          ./build/example_ex01_all_features.exe --nx=8 --ny=8 --frames=10 --iters=8 --substeps=1

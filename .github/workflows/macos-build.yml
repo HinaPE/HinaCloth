@@ -13,21 +13,21 @@ jobs:
 
       - uses: ashutoshvarma/setup-ninja@v1.1
 
-      - name: Configure (Release, no visualizer, examples+TBB on)
+      - name: Configure (Release, examples+tests, TBB on)
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DHINACLOTH_WITH_VULKAN_VISUALIZER=OFF \
             -DHINACLOTH_BUILD_EXAMPLES=ON \
+            -DHINACLOTH_BUILD_TESTS=ON \
             -DHINACLOTH_WITH_TBB=ON
 
       - name: Build
         run: cmake --build build --parallel
 
-      - name: Run smoke example (ex00)
+      - name: Run unit tests (ctest)
         run: |
-          ./build/example_ex00_minimal
+          ctest --test-dir build --output-on-failure -j 2
 
-      - name: Run benchmark (ex06)
+      - name: Run smoke example (all_features)
         run: |
-          ./build/example_ex06_bench --nx=16 --ny=16 --frames=10 --iters=8 --subs=1
+          ./build/example_ex01_all_features --nx=8 --ny=8 --frames=10 --iters=8 --substeps=1
