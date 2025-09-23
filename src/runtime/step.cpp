@@ -270,6 +270,15 @@ namespace sim { namespace eng {
 
     Status runtime_step(const Model& m, Data& d, float dt, const SolveOverrides* ovr, TelemetryFrame* out) {
         auto t0 = std::chrono::high_resolution_clock::now();
+        // Per-phase accumulators
+        double acc_integrate_ms = 0.0;
+        double acc_pack_ms = 0.0;
+        double acc_attachment_ms = 0.0;
+        double acc_distance_ms = 0.0;
+        double acc_bending_ms = 0.0;
+        double acc_finalize_ms = 0.0;
+        double acc_unpack_ms = 0.0;
+
         int substeps   = d.solve_substeps > 0 ? d.solve_substeps : 1;
         int iterations = d.solve_iterations > 0 ? d.solve_iterations : 8;
         float damping  = d.solve_damping;
@@ -280,35 +289,92 @@ namespace sim { namespace eng {
         substeps = substeps < 1 ? 1 : substeps;
         float dt_sub = dt / (float) substeps;
         for (int s = 0; s < substeps; ++s) {
+            auto ts = std::chrono::high_resolution_clock::now();
             integrate_pred(d, dt_sub);
+            auto te = std::chrono::high_resolution_clock::now();
+            acc_integrate_ms += std::chrono::duration<double, std::milli>(te - ts).count();
+
             prepare_alpha_edge(m, d, dt_sub);
             if (d.exec_layout_blocked) {
+                ts = std::chrono::high_resolution_clock::now();
                 if (d.pos_aosoa.empty()) {
                     std::size_t n = d.px.size();
                     std::size_t nb = (n + (std::size_t)d.layout_block_size - 1) / (std::size_t)d.layout_block_size;
                     d.pos_aosoa.assign(3u * (std::size_t)d.layout_block_size * nb, 0.0f);
                 }
                 storage_pack_soa_to_aosoa(d.px.data(), d.py.data(), d.pz.data(), d.px.size(), (std::size_t) d.layout_block_size, d.pos_aosoa.data());
+                te = std::chrono::high_resolution_clock::now();
+                acc_pack_ms += std::chrono::duration<double, std::milli>(te - ts).count();
+
+                ts = std::chrono::high_resolution_clock::now();
                 presolve_apply_attachment_aosoa(d);
+                te = std::chrono::high_resolution_clock::now();
+                acc_attachment_ms += std::chrono::duration<double, std::milli>(te - ts).count();
+
+                ts = std::chrono::high_resolution_clock::now();
                 project_distance_islands_aosoa(m, d, dt_sub, iterations);
+                te = std::chrono::high_resolution_clock::now();
+                acc_distance_ms += std::chrono::duration<double, std::milli>(te - ts).count();
+
+                ts = std::chrono::high_resolution_clock::now();
                 bending_pass_aosoa(m, d, dt_sub, iterations);
+                te = std::chrono::high_resolution_clock::now();
+                acc_bending_ms += std::chrono::duration<double, std::milli>(te - ts).count();
+
+                ts = std::chrono::high_resolution_clock::now();
                 storage_unpack_aosoa_to_soa(d.pos_aosoa.data(), d.px.size(), (std::size_t) d.layout_block_size, d.px.data(), d.py.data(), d.pz.data());
+                te = std::chrono::high_resolution_clock::now();
+                acc_unpack_ms += std::chrono::duration<double, std::milli>(te - ts).count();
             } else if (d.exec_layout_aos) {
+                ts = std::chrono::high_resolution_clock::now();
                 if (d.pos_aos.empty()) {
                     d.layout_aos_stride = 3u;
                     d.pos_aos.assign(static_cast<std::size_t>(d.layout_aos_stride) * d.px.size(), 0.0f);
                 }
                 storage_pack_soa_to_aos(d.px.data(), d.py.data(), d.pz.data(), d.px.size(), d.pos_aos.data(), d.layout_aos_stride);
+                te = std::chrono::high_resolution_clock::now();
+                acc_pack_ms += std::chrono::duration<double, std::milli>(te - ts).count();
+
+                ts = std::chrono::high_resolution_clock::now();
                 presolve_apply_attachment_aos(d);
+                te = std::chrono::high_resolution_clock::now();
+                acc_attachment_ms += std::chrono::duration<double, std::milli>(te - ts).count();
+
+                ts = std::chrono::high_resolution_clock::now();
                 project_distance_islands_aos(m, d, dt_sub, iterations);
+                te = std::chrono::high_resolution_clock::now();
+                acc_distance_ms += std::chrono::duration<double, std::milli>(te - ts).count();
+
+                ts = std::chrono::high_resolution_clock::now();
                 bending_pass_aos(m, d, dt_sub, iterations);
+                te = std::chrono::high_resolution_clock::now();
+                acc_bending_ms += std::chrono::duration<double, std::milli>(te - ts).count();
+
+                ts = std::chrono::high_resolution_clock::now();
                 storage_unpack_aos_to_soa(d.pos_aos.data(), d.px.size(), d.px.data(), d.py.data(), d.pz.data(), d.layout_aos_stride);
+                te = std::chrono::high_resolution_clock::now();
+                acc_unpack_ms += std::chrono::duration<double, std::milli>(te - ts).count();
             } else {
+                ts = std::chrono::high_resolution_clock::now();
                 presolve_apply_attachment_soa(d);
+                te = std::chrono::high_resolution_clock::now();
+                acc_attachment_ms += std::chrono::duration<double, std::milli>(te - ts).count();
+
+                ts = std::chrono::high_resolution_clock::now();
                 project_distance_islands_soa(m, d, dt_sub, iterations);
+                te = std::chrono::high_resolution_clock::now();
+                acc_distance_ms += std::chrono::duration<double, std::milli>(te - ts).count();
+
+                ts = std::chrono::high_resolution_clock::now();
                 bending_pass_soa(m, d, dt_sub, iterations);
+                te = std::chrono::high_resolution_clock::now();
+                acc_bending_ms += std::chrono::duration<double, std::milli>(te - ts).count();
             }
+
+            auto tf0 = std::chrono::high_resolution_clock::now();
             finalize(d, dt_sub, damping);
+            auto tf1 = std::chrono::high_resolution_clock::now();
+            acc_finalize_ms += std::chrono::duration<double, std::milli>(tf1 - tf0).count();
         }
         auto t1 = std::chrono::high_resolution_clock::now();
         if (out) {
@@ -316,6 +382,14 @@ namespace sim { namespace eng {
             out->residual_avg = compute_distance_residual(m, d);
             out->solve_substeps = substeps;
             out->solve_iterations = iterations;
+            // Set per-phase timings
+            out->integrate_ms = acc_integrate_ms;
+            out->pack_ms = acc_pack_ms;
+            out->attachment_ms = acc_attachment_ms;
+            out->distance_ms = acc_distance_ms;
+            out->bending_ms = acc_bending_ms;
+            out->finalize_ms = acc_finalize_ms;
+            out->unpack_ms = acc_unpack_ms;
         }
         return Status::Ok;
     }

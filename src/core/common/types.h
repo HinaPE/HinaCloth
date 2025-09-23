@@ -28,6 +28,14 @@ namespace sim { namespace eng {
         uint64_t structural_rebuilds{};
         int      solve_substeps{};
         int      solve_iterations{};
+        // Per-phase timings (accumulated across substeps in milliseconds)
+        double   integrate_ms{};
+        double   pack_ms{};       // SoA<->AoSoA/AoS pack time
+        double   attachment_ms{};
+        double   distance_ms{};
+        double   bending_ms{};
+        double   finalize_ms{};
+        double   unpack_ms{};     // SoA<->AoSoA/AoS unpack time
     };
 
     enum class DataLayout { Auto, SoA, AoS, Blocked };

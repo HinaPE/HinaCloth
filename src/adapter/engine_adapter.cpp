@@ -208,6 +208,14 @@ namespace sim {
         if (out_api && pout) {
             out_api->step_ms = out.step_ms; out_api->residual_avg = out.residual_avg; out_api->last_rebuild_ms = out.last_rebuild_ms; out_api->avg_rebuild_ms = out.avg_rebuild_ms;
             out_api->commands_applied = out.commands_applied; out_api->structural_rebuilds = out.structural_rebuilds; out_api->solve_substeps = out.solve_substeps; out_api->solve_iterations = out.solve_iterations;
+            // Map per-phase timings
+            out_api->integrate_ms = out.integrate_ms;
+            out_api->pack_ms = out.pack_ms;
+            out_api->attachment_ms = out.attachment_ms;
+            out_api->distance_ms = out.distance_ms;
+            out_api->bending_ms = out.bending_ms;
+            out_api->finalize_ms = out.finalize_ms;
+            out_api->unpack_ms = out.unpack_ms;
         }
         return to_api_status(st);
     }
