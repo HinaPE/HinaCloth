@@ -121,12 +121,18 @@ namespace sim {
             e->data->exec_use_tbb        = (ch.backend == eng::Backend::TBB);
             e->data->exec_threads        = (ch.threads <= 0) ? -1 : ch.threads;
             e->data->exec_layout_blocked = (ch.layout == eng::DataLayout::Blocked);
+            e->data->exec_layout_aos     = (ch.layout == eng::DataLayout::AoS);
             if (e->data->exec_layout_blocked) {
                 unsigned int blk = e->data->layout_block_size > 0 ? e->data->layout_block_size : (e->model->layout_block_size > 0 ? e->model->layout_block_size : 8u);
                 e->data->layout_block_size = blk;
                 std::size_t n = e->data->px.size();
                 std::size_t nb = (n + (std::size_t)blk - 1) / (std::size_t)blk;
                 e->data->pos_aosoa.assign(3u * (std::size_t)blk * nb, 0.0f);
+            }
+            if (e->data->exec_layout_aos) {
+                e->data->layout_aos_stride = 3u;
+                std::size_t n = e->data->px.size();
+                e->data->pos_aos.assign((std::size_t)e->data->layout_aos_stride * n, 0.0f);
             }
         }
         return e.release();
@@ -182,6 +188,11 @@ namespace sim {
                 std::size_t n = e->data->px.size();
                 std::size_t nb = (n + (std::size_t)blk - 1) / (std::size_t)blk;
                 e->data->pos_aosoa.assign(3u * (std::size_t)blk * nb, 0.0f);
+            }
+            if (e->data->exec_layout_aos) {
+                e->data->layout_aos_stride = 3u;
+                std::size_t n = e->data->px.size();
+                e->data->pos_aos.assign((std::size_t)e->data->layout_aos_stride * n, 0.0f);
             }
         }
         e->rebuilds += 1ull;

@@ -20,6 +20,16 @@ namespace sim {
         v.z = pz;
         v.n = n;
     }
+
+    inline void storage_soa_read3(const SoAView3& v, std::size_t i, float& x, float& y, float& z) noexcept {
+        x = v.x[i]; y = v.y[i]; z = v.z[i];
+    }
+    inline void storage_soa_write3(const SoAView3& v, std::size_t i, float x, float y, float z) noexcept {
+        v.x[i] = x; v.y[i] = y; v.z[i] = z;
+    }
+    inline void storage_soa_axpy3(const SoAView3& v, std::size_t i, float ax, float ay, float az) noexcept {
+        v.x[i] += ax; v.y[i] += ay; v.z[i] += az;
+    }
 }
 
 #endif

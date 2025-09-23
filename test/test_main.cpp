@@ -70,7 +70,7 @@ struct BuildHolder {
     std::vector<sim::Param> params;
 };
 
-static void setup_build_basic(BuildHolder& h,
+static void setup_build_basic_with_layout(BuildHolder& h,
                               const std::vector<Vec3>& pos,
                               const std::vector<Vec3>* vel,
                               const std::vector<uint32_t>& edges,
@@ -78,10 +78,9 @@ static void setup_build_basic(BuildHolder& h,
                               int substeps,
                               int iterations,
                               float damping,
-                              bool blocked_layout=false) {
+                              sim::DataLayout layout) {
     using namespace sim;
-    h = BuildHolder{}; // reset
-    // Fields
+    h = BuildHolder{};
     h.fields.clear();
     sim::FieldView fpos{}; fpos.name = "position"; fpos.type = sim::FieldType::F32; fpos.data = pos.data(); fpos.count = pos.size(); fpos.components = 3; fpos.stride_bytes = sizeof(Vec3);
     h.fields.push_back(fpos);
@@ -89,21 +88,12 @@ static void setup_build_basic(BuildHolder& h,
         sim::FieldView fvel{}; fvel.name = "velocity"; fvel.type = sim::FieldType::F32; fvel.data = vel->data(); fvel.count = vel->size(); fvel.components = 3; fvel.stride_bytes = sizeof(Vec3);
         h.fields.push_back(fvel);
     }
-
-    // Relations: edges first, then optional bend_pairs
     h.rels.clear();
-    if (!edges.empty()) {
-        sim::RelationView r{}; r.indices = edges.data(); r.arity = 2; r.count = edges.size()/2; r.tag = "edges";
-        h.rels.push_back(r);
-    }
-    if (bend_pairs && !bend_pairs->empty()) {
-        sim::RelationView r{}; r.indices = bend_pairs->data(); r.arity = 4; r.count = bend_pairs->size()/4; r.tag = "bend_pairs";
-        h.rels.push_back(r);
-    }
+    if (!edges.empty()) { sim::RelationView r{}; r.indices = edges.data(); r.arity = 2; r.count = edges.size()/2; r.tag = "edges"; h.rels.push_back(r); }
+    if (bend_pairs && !bend_pairs->empty()) { sim::RelationView r{}; r.indices = bend_pairs->data(); r.arity = 4; r.count = bend_pairs->size()/4; r.tag = "bend_pairs"; h.rels.push_back(r); }
 
-    // Policy
     sim::Policy pol{};
-    pol.exec.layout = blocked_layout ? sim::DataLayout::Blocked : sim::DataLayout::SoA;
+    pol.exec.layout = layout;
     pol.exec.backend = sim::Backend::Native;
     pol.exec.threads = 1;
     pol.exec.deterministic = true;
@@ -113,14 +103,12 @@ static void setup_build_basic(BuildHolder& h,
     pol.solve.damping = damping;
     pol.solve.stepper = sim::TimeStepper::Symplectic;
 
-    // Params: zero gravity by default
     h.params.clear();
     sim::Param px{ "gravity_x", sim::ParamType::F32, {.f32 = 0.0f} };
     sim::Param py{ "gravity_y", sim::ParamType::F32, {.f32 = 0.0f} };
     sim::Param pz{ "gravity_z", sim::ParamType::F32, {.f32 = 0.0f} };
     h.params.push_back(px); h.params.push_back(py); h.params.push_back(pz);
 
-    // BuildDesc wires
     h.desc = sim::BuildDesc{};
     h.desc.state = sim::StateInit{ h.fields.data(), h.fields.size() };
     h.desc.params = sim::Parameters{ h.params.data(), h.params.size() };
@@ -131,6 +119,18 @@ static void setup_build_basic(BuildHolder& h,
     h.desc.events = sim::EventsScript{ nullptr, 0 };
     h.desc.validate = sim::ValidateLevel::Strict;
     h.desc.pack = sim::PackOptions{ false, 8 };
+}
+
+static void setup_build_basic(BuildHolder& h,
+                              const std::vector<Vec3>& pos,
+                              const std::vector<Vec3>* vel,
+                              const std::vector<uint32_t>& edges,
+                              const std::vector<uint32_t>* bend_pairs,
+                              int substeps,
+                              int iterations,
+                              float damping,
+                              bool blocked_layout=false) {
+    setup_build_basic_with_layout(h, pos, vel, edges, bend_pairs, substeps, iterations, damping, blocked_layout ? sim::DataLayout::Blocked : sim::DataLayout::SoA);
 }
 
 static int test_distance_convergence() {
@@ -147,6 +147,40 @@ static int test_distance_convergence() {
         if (sim::step(s, 0.016f) != Status::Ok) { sim::destroy(s); return 2; }
         sim::TelemetryFrame tf{}; (void) sim::telemetry_query_frame(s, &tf);
         // residual should be small after some iterations
+        if (i==4 && !(tf.residual_avg < 1e-4)) { sim::destroy(s); return 3; }
+    }
+    sim::destroy(s);
+    return 0;
+}
+
+static int test_distance_convergence_aos() {
+    using namespace sim;
+    std::vector<Vec3> pos = { {0,0,0}, {1,0,0} };
+    std::vector<Vec3> vel = { {0,0,0}, {0.5f,0,0} };
+    std::vector<uint32_t> edges = { 0,1 };
+    BuildHolder bh{}; setup_build_basic_with_layout(bh, pos, &vel, edges, nullptr, /*substeps*/1, /*iterations*/16, /*damping*/0.0f, sim::DataLayout::AoS);
+    auto res = sim::create(bh.desc); if (res.status != Status::Ok || !res.value) return 1;
+    Solver* s = res.value;
+    for (int i=0;i<5;i++) {
+        if (sim::step(s, 0.016f) != Status::Ok) { sim::destroy(s); return 2; }
+        sim::TelemetryFrame tf{}; (void) sim::telemetry_query_frame(s, &tf);
+        if (i==4 && !(tf.residual_avg < 1e-4)) { sim::destroy(s); return 3; }
+    }
+    sim::destroy(s);
+    return 0;
+}
+
+static int test_distance_convergence_blocked() {
+    using namespace sim;
+    std::vector<Vec3> pos = { {0,0,0}, {1,0,0} };
+    std::vector<Vec3> vel = { {0,0,0}, {0.5f,0,0} };
+    std::vector<uint32_t> edges = { 0,1 };
+    BuildHolder bh{}; setup_build_basic_with_layout(bh, pos, &vel, edges, nullptr, /*substeps*/1, /*iterations*/16, /*damping*/0.0f, sim::DataLayout::Blocked);
+    auto res = sim::create(bh.desc); if (res.status != Status::Ok || !res.value) return 1;
+    Solver* s = res.value;
+    for (int i=0;i<5;i++) {
+        if (sim::step(s, 0.016f) != Status::Ok) { sim::destroy(s); return 2; }
+        sim::TelemetryFrame tf{}; (void) sim::telemetry_query_frame(s, &tf);
         if (i==4 && !(tf.residual_avg < 1e-4)) { sim::destroy(s); return 3; }
     }
     sim::destroy(s);
@@ -300,6 +334,8 @@ int main(int argc, char** argv) {
     }
     std::vector<NamedTest> tests = {
         { "distance", test_distance_convergence },
+        { "distance_aos", test_distance_convergence_aos },
+        { "distance_blocked", test_distance_convergence_blocked },
         { "attachment", test_attachment_operator },
         { "bending", test_bending_convergence },
         { "pinned", test_pinned_node },

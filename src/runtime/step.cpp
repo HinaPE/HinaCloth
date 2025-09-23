@@ -3,10 +3,12 @@
 #include "core/data/data.h"
 #include "backend/storage/soa.h"
 #include "backend/storage/aosoa.h"
+#include "backend/storage/aos.h"
 #include "backend/scheduler/seq.h"
 #include "backend/kernel/constraints/distance.h"
 #include "backend/kernel/constraints/distance_avx2.h"
 #include "backend/kernel/constraints/distance_aosoa.h"
+#include "backend/kernel/constraints/distance_aos.h"
 #include "backend/kernel/constraints/attachment.h"
 #include "backend/kernel/constraints/bending.h"
 #include <algorithm>
@@ -39,7 +41,7 @@ namespace sim { namespace eng {
         }
     }
 
-    static void presolve_apply_attachment(Data& d) {
+    static void presolve_apply_attachment_soa(Data& d) {
         if (!d.op_enable_attachment) return;
         SoAView3 pos{}; storage_bind_soa(pos, d.px.data(), d.py.data(), d.pz.data(), d.px.size());
         kernel_attachment_apply(pos,
@@ -49,6 +51,28 @@ namespace sim { namespace eng {
                                 d.attach_tz.empty() ? nullptr : d.attach_tz.data(),
                                 d.inv_mass.empty() ? nullptr : d.inv_mass.data(),
                                 d.px.size());
+    }
+    static void presolve_apply_attachment_aosoa(Data& d) {
+        if (!d.op_enable_attachment) return;
+        AoSoAView3 posb{}; storage_bind_aosoa(posb, d.pos_aosoa.data(), d.px.size(), (std::size_t) d.layout_block_size);
+        kernel_attachment_apply_aosoa(posb,
+                                      d.attach_w.empty() ? nullptr : d.attach_w.data(),
+                                      d.attach_tx.empty() ? nullptr : d.attach_tx.data(),
+                                      d.attach_ty.empty() ? nullptr : d.attach_ty.data(),
+                                      d.attach_tz.empty() ? nullptr : d.attach_tz.data(),
+                                      d.inv_mass.empty() ? nullptr : d.inv_mass.data(),
+                                      d.px.size());
+    }
+    static void presolve_apply_attachment_aos(Data& d) {
+        if (!d.op_enable_attachment) return;
+        AoSView3 posv{}; storage_bind_aos(posv, d.pos_aos.data(), d.px.size(), d.layout_aos_stride);
+        kernel_attachment_apply_aos(posv,
+                                    d.attach_w.empty() ? nullptr : d.attach_w.data(),
+                                    d.attach_tx.empty() ? nullptr : d.attach_tx.data(),
+                                    d.attach_ty.empty() ? nullptr : d.attach_ty.data(),
+                                    d.attach_tz.empty() ? nullptr : d.attach_tz.data(),
+                                    d.inv_mass.empty() ? nullptr : d.inv_mass.data(),
+                                    d.px.size());
     }
 
     static void prepare_alpha_edge(const Model& m, Data& d, float dt_sub) {
@@ -144,12 +168,60 @@ namespace sim { namespace eng {
         }
     }
 
-    static void bending_pass(const Model& m, Data& d, float dt, int iterations) {
+    static void project_distance_islands_aos(const Model& m, Data& d, float dt, int iterations) {
+        AoSView3 posv{}; storage_bind_aos(posv, d.pos_aos.data(), d.px.size(), d.layout_aos_stride);
+        const float* alpha_edge = d.distance_alpha_edge.empty() ? nullptr : d.distance_alpha_edge.data();
+        float alpha_scalar = std::max(0.0f, d.distance_compliance) / (dt * dt);
+        const std::size_t island_count = m.island_offsets.empty() ? 1u : (std::size_t) m.island_offsets.size() - 1u;
+        auto do_island = [&](std::size_t i) {
+            std::size_t base = m.island_offsets.empty() ? 0u : (std::size_t) m.island_offsets[i];
+            std::size_t cnt  = m.island_offsets.empty() ? (m.rest.size()) : (std::size_t) (m.island_offsets[i + 1] - m.island_offsets[i]);
+            if (cnt == 0) return;
+            const uint32_t* ebeg = m.edges.data() + 2 * base;
+            const float*    rbeg = m.rest.data() + base;
+            float*          lbeg = d.lambda_edge.empty() ? nullptr : (d.lambda_edge.data() + base);
+            kernel_distance_project_aos(ebeg, cnt, posv, rbeg,
+                                        d.inv_mass.empty() ? nullptr : d.inv_mass.data(),
+                                        lbeg,
+                                        alpha_edge ? (alpha_edge + base) : nullptr,
+                                        iterations, alpha_scalar, dt);
+        };
+        if (d.exec_use_tbb) {
+        #ifdef HINACLOTH_HAVE_TBB
+            if (d.exec_threads > 0) {
+                tbb::global_control ctrl(tbb::global_control::max_allowed_parallelism, (std::size_t)d.exec_threads);
+                tbb::parallel_for(std::size_t(0), island_count, [&](std::size_t i){ do_island(i); });
+            } else {
+                tbb::parallel_for(std::size_t(0), island_count, [&](std::size_t i){ do_island(i); });
+            }
+        #else
+            for (std::size_t i = 0; i < island_count; ++i) do_island(i);
+        #endif
+        } else {
+            for (std::size_t i = 0; i < island_count; ++i) do_island(i);
+        }
+    }
+
+    static void bending_pass_soa(const Model& m, Data& d, float dt, int iterations) {
         if (!d.op_enable_bending) return;
         if (m.bend_pairs.empty() || m.bend_rest_angle.empty()) return;
         SoAView3 pos{}; storage_bind_soa(pos, d.px.data(), d.py.data(), d.pz.data(), d.px.size());
         const unsigned int* quads = reinterpret_cast<const unsigned int*>(m.bend_pairs.data());
         kernel_bending_project(quads, m.bend_rest_angle.size(), pos, m.bend_rest_angle.data(), d.inv_mass.empty() ? nullptr : d.inv_mass.data(), iterations, 0.0f, dt);
+    }
+    static void bending_pass_aosoa(const Model& m, Data& d, float dt, int iterations) {
+        if (!d.op_enable_bending) return;
+        if (m.bend_pairs.empty() || m.bend_rest_angle.empty()) return;
+        AoSoAView3 posb{}; storage_bind_aosoa(posb, d.pos_aosoa.data(), d.px.size(), (std::size_t) d.layout_block_size);
+        const unsigned int* quads = reinterpret_cast<const unsigned int*>(m.bend_pairs.data());
+        kernel_bending_project_aosoa(quads, m.bend_rest_angle.size(), posb, m.bend_rest_angle.data(), d.inv_mass.empty() ? nullptr : d.inv_mass.data(), iterations, 0.0f, dt);
+    }
+    static void bending_pass_aos(const Model& m, Data& d, float dt, int iterations) {
+        if (!d.op_enable_bending) return;
+        if (m.bend_pairs.empty() || m.bend_rest_angle.empty()) return;
+        AoSView3 posv{}; storage_bind_aos(posv, d.pos_aos.data(), d.px.size(), d.layout_aos_stride);
+        const unsigned int* quads = reinterpret_cast<const unsigned int*>(m.bend_pairs.data());
+        kernel_bending_project_aos(quads, m.bend_rest_angle.size(), posv, m.bend_rest_angle.data(), d.inv_mass.empty() ? nullptr : d.inv_mass.data(), iterations, 0.0f, dt);
     }
 
     static void finalize(Data& d, float dt, float damping) {
@@ -209,7 +281,6 @@ namespace sim { namespace eng {
         float dt_sub = dt / (float) substeps;
         for (int s = 0; s < substeps; ++s) {
             integrate_pred(d, dt_sub);
-            presolve_apply_attachment(d);
             prepare_alpha_edge(m, d, dt_sub);
             if (d.exec_layout_blocked) {
                 if (d.pos_aosoa.empty()) {
@@ -218,12 +289,25 @@ namespace sim { namespace eng {
                     d.pos_aosoa.assign(3u * (std::size_t)d.layout_block_size * nb, 0.0f);
                 }
                 storage_pack_soa_to_aosoa(d.px.data(), d.py.data(), d.pz.data(), d.px.size(), (std::size_t) d.layout_block_size, d.pos_aosoa.data());
+                presolve_apply_attachment_aosoa(d);
                 project_distance_islands_aosoa(m, d, dt_sub, iterations);
+                bending_pass_aosoa(m, d, dt_sub, iterations);
                 storage_unpack_aosoa_to_soa(d.pos_aosoa.data(), d.px.size(), (std::size_t) d.layout_block_size, d.px.data(), d.py.data(), d.pz.data());
+            } else if (d.exec_layout_aos) {
+                if (d.pos_aos.empty()) {
+                    d.layout_aos_stride = 3u;
+                    d.pos_aos.assign(static_cast<std::size_t>(d.layout_aos_stride) * d.px.size(), 0.0f);
+                }
+                storage_pack_soa_to_aos(d.px.data(), d.py.data(), d.pz.data(), d.px.size(), d.pos_aos.data(), d.layout_aos_stride);
+                presolve_apply_attachment_aos(d);
+                project_distance_islands_aos(m, d, dt_sub, iterations);
+                bending_pass_aos(m, d, dt_sub, iterations);
+                storage_unpack_aos_to_soa(d.pos_aos.data(), d.px.size(), d.px.data(), d.py.data(), d.pz.data(), d.layout_aos_stride);
             } else {
+                presolve_apply_attachment_soa(d);
                 project_distance_islands_soa(m, d, dt_sub, iterations);
+                bending_pass_soa(m, d, dt_sub, iterations);
             }
-            bending_pass(m, d, dt_sub, iterations);
             finalize(d, dt_sub, damping);
         }
         auto t1 = std::chrono::high_resolution_clock::now();

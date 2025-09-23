@@ -46,6 +46,7 @@ namespace sim {
         d->exec_threads  = in.policy.exec.threads == 0 ? -1 : in.policy.exec.threads;
         d->exec_use_avx2 = (in.policy.exec.backend == Backend::AVX2);
         d->exec_layout_blocked = (in.policy.exec.layout == DataLayout::Blocked);
+        d->exec_layout_aos     = (in.policy.exec.layout == DataLayout::AoS);
         unsigned int blk = in.pack.block_size > 0 ? static_cast<unsigned int>(in.pack.block_size) : (m.layout_block_size > 0 ? m.layout_block_size : 8u);
         d->layout_block_size = blk;
         d->solve_substeps   = in.policy.solve.substeps > 0 ? in.policy.solve.substeps : 1;
@@ -82,6 +83,10 @@ namespace sim {
         if (d->exec_layout_blocked) {
             size_t nb = (npos + static_cast<size_t>(blk) - 1) / static_cast<size_t>(blk);
             d->pos_aosoa.assign(3u * static_cast<size_t>(blk) * nb, 0.0f);
+        }
+        if (d->exec_layout_aos) {
+            d->layout_aos_stride = 3u;
+            d->pos_aos.assign(static_cast<size_t>(d->layout_aos_stride) * npos, 0.0f);
         }
         d->op_enable_attachment = false;
         d->op_enable_bending    = false;
@@ -195,9 +200,14 @@ namespace sim {
         d->exec_use_avx2 = oldd.exec_use_avx2;
         d->exec_layout_blocked = oldd.exec_layout_blocked;
         d->layout_block_size   = oldd.layout_block_size;
+        d->exec_layout_aos     = oldd.exec_layout_aos;
+        d->layout_aos_stride   = oldd.layout_aos_stride;
         if (d->exec_layout_blocked) {
             size_t nb = (n + static_cast<size_t>(d->layout_block_size) - 1) / static_cast<size_t>(d->layout_block_size);
             d->pos_aosoa.assign(3u * static_cast<size_t>(d->layout_block_size) * nb, 0.0f);
+        }
+        if (d->exec_layout_aos) {
+            d->pos_aos.assign(static_cast<size_t>(d->layout_aos_stride) * n, 0.0f);
         }
         d->op_enable_attachment = oldd.op_enable_attachment;
         d->op_enable_bending    = oldd.op_enable_bending;

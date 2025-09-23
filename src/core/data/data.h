@@ -38,6 +38,9 @@ namespace sim {
         bool  exec_layout_blocked{false};
         unsigned int layout_block_size{8u};
         std::vector<float> pos_aosoa;
+        bool  exec_layout_aos{false};
+        unsigned int layout_aos_stride{3u};
+        std::vector<float> pos_aos;
         bool  op_enable_attachment{false};
         bool  op_enable_bending{false};
         std::vector<float> attach_w;
