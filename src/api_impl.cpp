@@ -11,4 +11,14 @@
 #include "rphys/api_capability.h"
 #include "rphys/api_version.h"
 
-// empty translation unit (skeleton)
+#include "api_layer/gateway_world.hpp"
+
+namespace rphys {
+
+world_id create_world(const world_desc& desc) { return gw_create_world(desc); }
+void destroy_world(world_id id) { gw_destroy_world(id); }
+void step_world(world_id id, double dt) { gw_step_world(id, dt); }
+std::uint64_t world_frame_count(world_id id) { return gw_world_frame_count(id); }
+double world_total_time(world_id id) { return gw_world_total_time(id); }
+
+} // namespace rphys
