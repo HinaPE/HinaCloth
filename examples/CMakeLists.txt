@@ -1,13 +1,9 @@
-add_executable(example_ex01_all_features ex_01_all_features.cpp)
+cmake_minimum_required(VERSION 3.26)
 
-target_link_libraries(example_ex01_all_features PRIVATE libhinacloth)
+add_executable(example_minimal main.cpp)
+set_target_properties(example_minimal PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED YES CXX_EXTENSIONS NO)
 
-hinacloth_apply_common_warnings(example_ex01_all_features)
-hinacloth_apply_release_opts(example_ex01_all_features)
+target_link_libraries(example_minimal PRIVATE HinaPE)
 
-set_target_properties(example_ex01_all_features PROPERTIES CXX_STANDARD 23 CXX_EXTENSIONS OFF)
+target_include_directories(example_minimal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../include)
 
-if (HINACLOTH_WITH_TBB)
-    include(../cmake/setup_tbb.cmake)
-    use_tbb(example_ex01_all_features)
-endif()

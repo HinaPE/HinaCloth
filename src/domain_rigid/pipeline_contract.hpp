@@ -1,0 +1,7 @@
+#ifndef RPHYS_DOMAIN_RIGID_PIPELINE_CONTRACT_HPP
+#define RPHYS_DOMAIN_RIGID_PIPELINE_CONTRACT_HPP
+
+namespace rphys { struct rigid_pipeline_contract; }
+
+#endif // RPHYS_DOMAIN_RIGID_PIPELINE_CONTRACT_HPP
+

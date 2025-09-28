@@ -1,0 +1,7 @@
+#ifndef RPHYS_DOMAIN_FLUID_ALGORITHMS_FLIP_FLUID_HPP
+#define RPHYS_DOMAIN_FLUID_ALGORITHMS_FLIP_FLUID_HPP
+
+namespace rphys { struct flip_fluid_algorithm; }
+
+#endif // RPHYS_DOMAIN_FLUID_ALGORITHMS_FLIP_FLUID_HPP
+

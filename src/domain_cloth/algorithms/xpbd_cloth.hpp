@@ -1,0 +1,7 @@
+#ifndef RPHYS_DOMAIN_CLOTH_ALGORITHMS_XPBD_CLOTH_HPP
+#define RPHYS_DOMAIN_CLOTH_ALGORITHMS_XPBD_CLOTH_HPP
+
+namespace rphys { struct xpbd_cloth_algorithm; }
+
+#endif // RPHYS_DOMAIN_CLOTH_ALGORITHMS_XPBD_CLOTH_HPP
+

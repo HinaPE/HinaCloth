@@ -1,0 +1,7 @@
+#ifndef RPHYS_COUPLING_CLOTH_FLUID_SIMPLE_DRAG_HPP
+#define RPHYS_COUPLING_CLOTH_FLUID_SIMPLE_DRAG_HPP
+
+namespace rphys { struct cloth_fluid_simple_drag; }
+
+#endif // RPHYS_COUPLING_CLOTH_FLUID_SIMPLE_DRAG_HPP
+

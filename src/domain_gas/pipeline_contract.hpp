@@ -1,0 +1,7 @@
+#ifndef RPHYS_DOMAIN_GAS_PIPELINE_CONTRACT_HPP
+#define RPHYS_DOMAIN_GAS_PIPELINE_CONTRACT_HPP
+
+namespace rphys { struct gas_pipeline_contract; }
+
+#endif // RPHYS_DOMAIN_GAS_PIPELINE_CONTRACT_HPP
+

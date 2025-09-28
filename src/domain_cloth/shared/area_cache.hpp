@@ -1,0 +1,7 @@
+#ifndef RPHYS_DOMAIN_CLOTH_SHARED_AREA_CACHE_HPP
+#define RPHYS_DOMAIN_CLOTH_SHARED_AREA_CACHE_HPP
+
+namespace rphys { struct cloth_area_cache; }
+
+#endif // RPHYS_DOMAIN_CLOTH_SHARED_AREA_CACHE_HPP
+

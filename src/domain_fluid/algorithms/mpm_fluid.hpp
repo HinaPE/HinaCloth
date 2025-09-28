@@ -1,0 +1,7 @@
+#ifndef RPHYS_DOMAIN_FLUID_ALGORITHMS_MPM_FLUID_HPP
+#define RPHYS_DOMAIN_FLUID_ALGORITHMS_MPM_FLUID_HPP
+
+namespace rphys { struct mpm_fluid_algorithm; }
+
+#endif // RPHYS_DOMAIN_FLUID_ALGORITHMS_MPM_FLUID_HPP
+

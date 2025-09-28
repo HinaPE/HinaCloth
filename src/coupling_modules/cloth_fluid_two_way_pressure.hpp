@@ -1,0 +1,7 @@
+#ifndef RPHYS_COUPLING_CLOTH_FLUID_TWO_WAY_PRESSURE_HPP
+#define RPHYS_COUPLING_CLOTH_FLUID_TWO_WAY_PRESSURE_HPP
+
+namespace rphys { struct cloth_fluid_two_way_pressure; }
+
+#endif // RPHYS_COUPLING_CLOTH_FLUID_TWO_WAY_PRESSURE_HPP
+

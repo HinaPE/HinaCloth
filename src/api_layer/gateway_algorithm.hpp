@@ -1,0 +1,7 @@
+#ifndef RPHYS_GATEWAY_ALGORITHM_HPP
+#define RPHYS_GATEWAY_ALGORITHM_HPP
+
+namespace rphys { }
+
+#endif // RPHYS_GATEWAY_ALGORITHM_HPP
+

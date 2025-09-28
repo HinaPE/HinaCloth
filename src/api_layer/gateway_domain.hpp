@@ -1,0 +1,7 @@
+#ifndef RPHYS_GATEWAY_DOMAIN_HPP
+#define RPHYS_GATEWAY_DOMAIN_HPP
+
+namespace rphys { }
+
+#endif // RPHYS_GATEWAY_DOMAIN_HPP
+

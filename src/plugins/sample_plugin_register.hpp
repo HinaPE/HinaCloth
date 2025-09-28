@@ -1,0 +1,7 @@
+#ifndef RPHYS_PLUGINS_SAMPLE_PLUGIN_REGISTER_HPP
+#define RPHYS_PLUGINS_SAMPLE_PLUGIN_REGISTER_HPP
+
+namespace rphys { struct sample_plugin_registration; }
+
+#endif // RPHYS_PLUGINS_SAMPLE_PLUGIN_REGISTER_HPP
+

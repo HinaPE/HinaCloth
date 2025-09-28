@@ -1,0 +1,7 @@
+#ifndef RPHYS_DOMAIN_GAS_ALGORITHMS_GRID_GAS_HPP
+#define RPHYS_DOMAIN_GAS_ALGORITHMS_GRID_GAS_HPP
+
+namespace rphys { struct grid_gas_algorithm; }
+
+#endif // RPHYS_DOMAIN_GAS_ALGORITHMS_GRID_GAS_HPP
+

@@ -1,0 +1,7 @@
+#ifndef RPHYS_COUPLING_CLOTH_RIGID_PROJECTION_HPP
+#define RPHYS_COUPLING_CLOTH_RIGID_PROJECTION_HPP
+
+namespace rphys { struct cloth_rigid_projection; }
+
+#endif // RPHYS_COUPLING_CLOTH_RIGID_PROJECTION_HPP
+

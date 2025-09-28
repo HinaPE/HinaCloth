@@ -1,0 +1,7 @@
+#ifndef RPHYS_DOMAIN_FLUID_SHARED_KERNEL_WEIGHTS_HPP
+#define RPHYS_DOMAIN_FLUID_SHARED_KERNEL_WEIGHTS_HPP
+
+namespace rphys { struct fluid_kernel_weights; }
+
+#endif // RPHYS_DOMAIN_FLUID_SHARED_KERNEL_WEIGHTS_HPP
+

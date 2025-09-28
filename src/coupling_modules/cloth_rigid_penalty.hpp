@@ -1,0 +1,7 @@
+#ifndef RPHYS_COUPLING_CLOTH_RIGID_PENALTY_HPP
+#define RPHYS_COUPLING_CLOTH_RIGID_PENALTY_HPP
+
+namespace rphys { struct cloth_rigid_penalty; }
+
+#endif // RPHYS_COUPLING_CLOTH_RIGID_PENALTY_HPP
+

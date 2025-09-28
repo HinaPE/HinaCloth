@@ -1,0 +1,7 @@
+#ifndef RPHYS_GATEWAY_COUPLING_HPP
+#define RPHYS_GATEWAY_COUPLING_HPP
+
+namespace rphys { }
+
+#endif // RPHYS_GATEWAY_COUPLING_HPP
+

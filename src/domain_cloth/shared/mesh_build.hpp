@@ -1,0 +1,7 @@
+#ifndef RPHYS_DOMAIN_CLOTH_SHARED_MESH_BUILD_HPP
+#define RPHYS_DOMAIN_CLOTH_SHARED_MESH_BUILD_HPP
+
+namespace rphys { struct cloth_mesh_build; }
+
+#endif // RPHYS_DOMAIN_CLOTH_SHARED_MESH_BUILD_HPP
+

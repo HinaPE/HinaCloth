@@ -1,0 +1,7 @@
+#ifndef RPHYS_PERF_LAYERS_FUTURE_OPT_PLACEHOLDER_HPP
+#define RPHYS_PERF_LAYERS_FUTURE_OPT_PLACEHOLDER_HPP
+
+namespace rphys { struct perf_future_opt_placeholder; }
+
+#endif // RPHYS_PERF_LAYERS_FUTURE_OPT_PLACEHOLDER_HPP
+

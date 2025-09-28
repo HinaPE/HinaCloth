@@ -1,0 +1,7 @@
+#ifndef RPHYS_DOMAIN_RIGID_ALGORITHMS_XPBD_RIGID_HPP
+#define RPHYS_DOMAIN_RIGID_ALGORITHMS_XPBD_RIGID_HPP
+
+namespace rphys { struct xpbd_rigid_algorithm; }
+
+#endif // RPHYS_DOMAIN_RIGID_ALGORITHMS_XPBD_RIGID_HPP
+

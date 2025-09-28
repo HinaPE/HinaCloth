@@ -1,0 +1,7 @@
+#ifndef RPHYS_DOMAIN_CLOTH_SHARED_BENDING_ENERGY_HPP
+#define RPHYS_DOMAIN_CLOTH_SHARED_BENDING_ENERGY_HPP
+
+namespace rphys { struct cloth_bending_energy; }
+
+#endif // RPHYS_DOMAIN_CLOTH_SHARED_BENDING_ENERGY_HPP
+
