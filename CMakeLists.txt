@@ -9,7 +9,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 option(HINAPE_WARN_AS_ERROR "Treat compiler warnings as errors" ON)
 option(HINAPE_WITH_TBB "Enable oneTBB integration" ON)
 option(HINAPE_WITH_AVX2 "Enable AVX2 optimizations when available (Release only)" ON)
-option(HINAPE_BUILD_TESTS "Build tests" OFF)
+option(HINAPE_BUILD_TESTS "Build tests" ON)
 option(HINAPE_BUILD_EXAMPLES "Build examples" ON)
 
 include(CheckCXXCompilerFlag)

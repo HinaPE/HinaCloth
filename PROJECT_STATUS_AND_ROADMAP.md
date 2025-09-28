@@ -27,21 +27,21 @@ Top-level notable items:
 ### 1.1 Core Source Subsystem Directories
 | Directory | Purpose (Inferred) | Current Implementation State |
 |-----------|--------------------|------------------------------|
-| `src/core_base/` | Fundamental engine abstractions: world lifecycle, algorithm & domain bases, parameter & telemetry infra, field bus | All headers are thin forward declarations or trivial placeholders; `.cpp` files mostly empty (e.g., `world_core.cpp` has only an include + comment) |
-| `src/api_layer/` | Gateway façade mapping (likely C-style or stable API layer) to internal opaque objects | Contains gateway_xxx.{hpp,cpp} placeholders; minimal or empty translation units |
+| `src/core_base/` | Fundamental engine abstractions: world lifecycle, algorithm & domain bases, parameter & telemetry infra, field bus | Minimal implementation now present for `world_core` (frame counter + total time accumulation). Other components remain placeholders. |
+| `src/api_layer/` | Gateway façade mapping (likely C-style or stable API layer) to internal opaque objects | `gateway_world` implemented with simple id->pointer slot registry; other gateways still placeholders. |
 | `src/domain_cloth/` | Cloth-specific pipeline contract and algorithm variants (PBD, XPBD, Stable PD, FEM) | Algorithms have empty `.cpp` with struct forward declarations in headers |
 | `src/domain_fluid/` | Fluid algorithms (SPH, MPM, FLIP) | Same skeleton pattern |
 | `src/domain_gas/` | Gas simulation (grid-based, LBM) | Same skeleton pattern |
 | `src/domain_rigid/` | Rigid body algorithms (Impulse, Featherstone, XPBD) | Same skeleton pattern |
 | `src/domain_new_template/` | (Implied pattern base for future domain) | Not enumerated in detail; presumably scaffolding |
-| `src/coupling_modules/` | Cross-domain interaction descriptors (cloth-fluid drag/pressure, cloth-rigid contact/penalty/projection, multi-field mixers) | Header/CPP pairs exist; expected no logic (not inspected fully line-by-line but pattern consistent) |
+| `src/coupling_modules/` | Cross-domain interaction descriptors (cloth-fluid drag/pressure, cloth-rigid contact/penalty/projection, multi-field mixers) | Header/CPP pairs exist; expected no logic (pattern consistent) |
 | `src/perf_layers/` | Performance acceleration: SIMD abstraction, GPU backend stub, layout packing, cache, future optimization placeholder | All minimal stubs |
 | `src/schedulers/` | Execution control: serial, job system stub, GPU stub, task pool | Placeholders only; no scheduling logic implemented |
 | `src/telemetry_export/` | Export formats (CSV, JSON) | Stubs (no serialization pipelines implemented) |
 | `src/plugins/` | Plugin registration sample | Minimal placeholder |
 | `src/algo_sandbox/` | Experimentation tools (parameter scan, differential fields, run matrix) | Skeleton stubs |
-| `src/api_impl.cpp` | Aggregates (includes) many `rphys/api_*.h` headers (which are missing in repo) | Empty translation unit indicates missing API surface files |
-| `src/api_stubs.cpp` | (Present in listing) – not yet read but by pattern likely empty placeholder | Probably empty |
+| `src/api_impl.cpp` | Aggregates API headers; now contains forwarding implementations for world lifecycle + queries | World-related API functions implemented; rest empty |
+| `src/api_stubs.cpp` | Placeholder | Empty / unchanged |
 
 ### 1.2 Missing / Not Present but Referenced
 The file `api_impl.cpp` includes headers under `rphys/` that DON'T exist in `include/rphys/` (based on current listing). These missing public API header groups:
@@ -65,14 +65,15 @@ Conclusion: A *planned stable C API / façade layer* is absent and must be autho
 Below is a breakdown of what is genuinely implemented (as of snapshot) vs. implied but not yet realized.
 
 ### 2.1 Core Objects
-- `world_core.hpp` declares:
-  - `struct world_config { int placeholder{}; };`
-  - Opaque `world_core` forward declaration.
-  - Factory/lifecycle: `create_world_core`, `destroy_world_core`, `step_world_core(world_core*, double dt)` – **No definitions** present.
-- `algorithm_core`, `domain_core`, `telemetry_core` likewise only forward-declared; no virtual interface, no polymorphic base, no vtables, no type registries.
-- `field_bus.hpp` defines a data record struct with raw pointers for field metadata and declares registration / lookup functions – **no storage container or lifetime semantics implemented**.
-- `param_store.hpp` declares set/get for doubles – no type-erasure mechanics, no internal structure design.
-- `status_codes.hpp` empty placeholder (no enum or code mapping yet).
+- `world_core.hpp` & `world_core.cpp` now implement:
+  - Internal struct with `frame_count`, `total_time`, stored config.
+  - `create_world_core` (allocates & initializes), `destroy_world_core`, `step_world_core` (increments frame + accumulates clamped non-negative dt).
+  - Negative `dt` guarded (clamped to 0). No phase system yet.
+- `gateway_world.(hpp|cpp)` implemented:
+  - Simple slot vector storing raw pointers; `world_id` is 1-based index; no generation counter yet (future improvement for stale ID detection).
+  - Provides query bridging for frame count & total time.
+- Public API additions (`api_world.h`): `world_frame_count`, `world_total_time`.
+- Remaining core components (`algorithm_core`, `domain_core`, `telemetry_core`, `field_bus`, `param_store`) still placeholders with no backing storage/logic.
 
 ### 2.2 Domain Layers
 Each domain has a `pipeline_contract.hpp` with only opaque struct declarations; algorithms have no parameters, no solver loops, no memory layout decisions. Missing components include:
@@ -524,11 +525,20 @@ Mapping macro suggestion:
 
 ---
 ## 25. Immediate Next Actions (Action Queue)
-1. Add missing `include/rphys/api_version.h` + `api_world.h` minimal declarations.
-2. Implement `world_core.cpp` with simple struct + step accumulating dt.
-3. Add unit test verifying world step increments frame counter.
-4. Add param store simple map + test.
-5. Populate gateway_world with thin wrappers bridging to core.
+1. Add missing `include/rphys/api_version.h` + `api_world.h` minimal declarations. **(DONE 2025-09-29)**
+2. Implement `world_core.cpp` with simple struct + step accumulating dt. **(DONE 2025-09-29)**
+3. Add unit test verifying world step increments frame counter. **(IN PROGRESS: B1 harness added; test implemented)**
+4. Add param store simple map + test. **(PENDING)**
+5. Populate gateway_world with thin wrappers bridging to core. **(DONE 2025-09-29)**
+
+Status Notes:
+- Vertical slice (world lifecycle + basic example) completed.
+- Test framework (Catch2) integrated under `test/` with `test_world_basic.cpp` verifying frame/time logic & negative dt clamp.
+
+Revised Near-Term Additions:
+6. Introduce param store implementation (double-only) + API exposure.
+7. Implement field bus registry minimal map + registration/query.
+8. Add generation counters to world handles (defensive robustness).
 
 ---
 ## 26. Verification Strategy After Each Milestone
@@ -591,6 +601,82 @@ Open Issues Carried Forward:
 - ...
 ```
 
+## 33. Recent Update Log
+### [Bootstrap Slice Extension] - 2025-09-29
+Changes Implemented:
+- Added minimal `world_core` implementation (frame/time accumulation).
+- Added `gateway_world` with slot-based id->pointer mapping.
+- Extended public API: `world_frame_count`, `world_total_time`.
+- Implemented forwarding in `api_impl.cpp` for world functions.
+- Updated example to exercise world create/step/destroy and print diagnostics.
+- Integrated Catch2 test framework via `FetchContent` (see `test/CMakeLists.txt`).
+- Added `test_world_basic.cpp` validating:
+  - Successful world creation (non-zero id).
+  - Frame count increments accurately after N steps.
+  - Total time equals sum of non-negative dt (within tolerance) & negative dt clamped.
+
+Open Follow-Ups:
+- Add handle generation counters.
+- Introduce parameter store real implementation + tests (next step in roadmap).
+- Decide on error/status code returns vs current silent no-op on invalid ID.
+
+Metrics (Preliminary):
+- Frames stepped in test: 10 (target) – PASS.
+- Negative dt test: total_time unchanged – PASS.
+
+Risk / Debt Introduced:
+- Slot vector can leak fragmentation (acceptable short-term; optimize later).
+- Silent ignore of invalid IDs might hide logic errors; plan to add assertions in debug builds.
+
+---
+## 34. Upcoming Focus Snapshot (XPBD Multi-Backend Initiative)
+Objective: Implement a production-oriented XPBD cloth pipeline supporting comparative evaluation across memory layouts (AoS, SoA, SoA-Blocked/Array-of-Struct-of-Arrays (AoSoA), Struct-of-Arrays-of-Structs (SoAoS) for cache/vec tuning) and execution backends (Scalar, SSE2, AVX2, TBB-parallel, CUDA, Vulkan Compute) while preserving the framework's decoupling to enable future algorithms (Projective Dynamics, FEM) and other domains.
+
+High-Level Pillars:
+1. Data Layout Abstraction Layer
+   - Introduce `layout_tag` + policy structs (aos_layout, soa_layout, aosoa_layout<L>, hybrid_layout) implementing a shared particle field access concept.
+   - Provide iterator + span-like views with compile-time stride & alignment metadata.
+   - Central registry attaches active layout strategy to a cloth instance through an `algorithm_config` payload.
+2. Backend Dispatch Layer
+   - Introduce backend enum: `backend_kind { scalar, sse2, avx2, tbb_parallel, cuda, vk_compute }`.
+   - For CPU SIMD: use templated functors specialized on lane width; fallback scalar.
+   - For CUDA/Vulkan: define narrow C interface for buffer acquisition + kernel submission (async path later; sync first).
+3. XPBD Core Algorithm Decomposition
+   - Phases: (a) Precompute constraint data (rest lengths / compliance), (b) Predict positions, (c) Constraint iterations (pos projection, lagrange multiplier update), (d) Velocity update.
+   - Constraint types initial: Stretch (edge), optionally add Bending (face pairs) in later milestone.
+4. Scheduling Integration
+   - Each phase exposed as tasks; parallel constraints partitioned via coloring or index tiling.
+5. Determinism Strategy
+   - Deterministic mode: fixed iteration order & disabled parallel reordering; non-deterministic optimized mode for perf benchmarks.
+6. Benchmark & Telemetry Plan
+   - Metrics: ms/step (total + per-phase), L1/L2 miss (if available later), constraint throughput (constraints/sec), iteration residual norm, memory footprint, warp occupancy (CUDA), SIMD lane utilization.
+7. Verification & Parity
+   - Reference scalar implementation = golden model; per backend numeric deviation tracked (pos max abs error, energy drift) vs tolerance.
+
+Incremental Milestones (See ROADMAP_XPBD.md for detail):
+- X0: Infrastructure (layout/ backend scaffolding, baseline scalar XPBD). 
+- X1: SIMD (SSE2/AVX2) stretch constraint projection.
+- X2: Parallel (TBB) multi-iteration scheduling + color partitioning.
+- X3: CUDA naive port (global memory, no shared memory optimizations), correctness parity.
+- X4: Vulkan compute equivalent path & descriptor abstraction.
+- X5: Advanced layouts (AoSoA blocking & micro-batch vector kernel) + performance telemetry.
+- X6: Bending constraints + stability tuning (compliance scaling, adaptive iterations).
+- X7: Consolidation: cross-backend benchmark harness + regression gates.
+
+Immediate Adjustments to Backlog (Additions):
+- Add: `layout_policy.hpp`, `cloth_particle_store.hpp`, `backend_dispatch.hpp`.
+- Add: CPU feature probe utility (cpuid) for runtime dispatch selection (optional early integration).
+- Add: Benchmark harness target `bench_xpbd` (later after X2).
+
+Risk Considerations:
+- Backend divergence: mitigate via shared algebra utilities + test golden reference per commit.
+- Memory pressure multiple layouts: introduce lazy (on-demand) transcode path only when switching layouts.
+
+Next Action Prep (before starting X0):
+- Decide default layout (SoA) & block size candidate for AoSoA (e.g., 8 or 16 based on AVX2 lane & cache line tradeoffs).
+- Stub backend selection API: `select_backend(cloth_handle, backend_kind)` returning status.
+
+(Full execution details in new file: ROADMAP_XPBD.md)
+
 ---
 End of file.
-
